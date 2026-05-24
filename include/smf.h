@@ -145,6 +145,7 @@ class Smf
                 unsigned int local_mask_len;
                 ProtoAddress remote_addr;             // invalid for non-tunnels, INADDR_ANY for mGRE tunnels
                 bool         mapped;                  // false for interfaces assigned to the interface, true for "mapped" association
+                                                      // (stored but not yet read for lookup or policy)
                 char         address_info_key[16+16]; // big enough for IPv6
                 unsigned int address_info_size;       // in bits
         };  // end class Smf::InterfaceInfo
