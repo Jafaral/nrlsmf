@@ -6,7 +6,7 @@
 #include "smf.h"
 
 /*
-Ccurrnet config schema
+Current config schema
 group : 
 {
     name            : <string>

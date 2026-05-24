@@ -8,21 +8,21 @@ ElasticMsg::ElasticMsg(void*        bufferPtr,
                        unsigned int bufferBytes,
                        bool         initFromBuffer,
                        bool         freeOnDestruct)
-  : ProtoPkt(bufferPtr, bufferBytes, freeOnDestruct)  
+  : ProtoPkt(bufferPtr, bufferBytes, freeOnDestruct)
 {
     if (initFromBuffer && (NULL != bufferPtr))
         InitFromBuffer();
 }
 
-ElasticMsg::~ElasticMsg() 
+ElasticMsg::~ElasticMsg()
 {
 }
-              
-bool ElasticMsg::InitFromBuffer(void*        bufferPtr, 
-                                unsigned int numBytes, 
+
+bool ElasticMsg::InitFromBuffer(void*        bufferPtr,
+                                unsigned int numBytes,
                                 bool         freeOnDestruct)
 {
-    if (NULL != bufferPtr) 
+    if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
     else
         ProtoPkt::SetLength(0);
@@ -87,14 +87,14 @@ const ProtoAddress ElasticMsg::ELASTIC_ASYM_MAC = ProtoAddress().GetEthernetMult
 const UINT16 ElasticMsg::ELASTIC_PORT = 5555;
 const UINT8 ElasticMsg::DEFAULT_ASYM_TTL = 8;
 
-        
-ElasticAck::ElasticAck(void*          bufferPtr, 
-                       unsigned int   bufferBytes, 
+
+ElasticAck::ElasticAck(void*          bufferPtr,
+                       unsigned int   bufferBytes,
                        bool           initFromBuffer,
                        bool           freeOnDestruct)
  : ElasticMsg(bufferPtr, bufferBytes, false, freeOnDestruct)
 {
-    if (NULL != bufferPtr) 
+    if (NULL != bufferPtr)
     {
         if (initFromBuffer)
             InitFromBuffer();
@@ -113,11 +113,11 @@ ElasticAck::~ElasticAck()
 {
 }
 
-bool ElasticAck::InitFromBuffer(void*           bufferPtr, 
-                                unsigned int    numBytes, 
+bool ElasticAck::InitFromBuffer(void*           bufferPtr,
+                                unsigned int    numBytes,
                                 bool            freeOnDestruct)
 {
-    if (NULL != bufferPtr) 
+    if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
     else
         ProtoPkt::SetLength(0);
@@ -192,7 +192,7 @@ bool ElasticAck::GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const
     {
         PLOG(PL_ERROR, "ElasticAck::GetUpstreamAddr() error: out-of-bounds index!\n");
         return false;
-    } 
+    }
     ProtoAddress::Type addrType;
     unsigned int addrLen, fieldLen;
     switch (GetUpstreamListType())
@@ -219,8 +219,8 @@ bool ElasticAck::GetUpstreamAddr(UINT8 index, ProtoAddress& addr) const
     return addr.SetRawHostAddress(addrType, addrPtr, addrLen);
 }  // end ElasticAck::GetUpstreamAddr()
 
-bool ElasticAck::InitIntoBuffer(void*         bufferPtr, 
-                                unsigned int  bufferBytes, 
+bool ElasticAck::InitIntoBuffer(void*         bufferPtr,
+                                unsigned int  bufferBytes,
                                 bool          freeOnDestruct)
 {
     unsigned int minLength = OFFSET_CLASS + 1;
@@ -231,7 +231,7 @@ bool ElasticAck::InitIntoBuffer(void*         bufferPtr,
         else
             AttachBuffer(bufferPtr, bufferBytes, freeOnDestruct);
     }
-    else if (GetBufferLength() < minLength) 
+    else if (GetBufferLength() < minLength)
     {
         return false;
     }
@@ -393,13 +393,13 @@ bool ElasticAck::AppendUpstreamAddr(const ProtoAddress& addr)
 ///////////////////////////////////////////
 // ElasticAdv implementation
 
-ElasticAdv::ElasticAdv(void*          bufferPtr, 
-                       unsigned int   bufferBytes, 
+ElasticAdv::ElasticAdv(void*          bufferPtr,
+                       unsigned int   bufferBytes,
                        bool           initFromBuffer,
                        bool           freeOnDestruct)
  : ElasticMsg(bufferPtr, bufferBytes, false, freeOnDestruct)
 {
-    if (NULL != bufferPtr) 
+    if (NULL != bufferPtr)
     {
         if (initFromBuffer)
             InitFromBuffer();
@@ -441,7 +441,7 @@ UINT16 ElasticAdv::EncodeMetric(double value)
         UINT16 field = (UINT16)(value * scale);
         if (field < 2)
             return 2;
-        else 
+        else
             return field;
     }
 } // end ElasticAdv::EncodeMetric()
@@ -459,11 +459,11 @@ double ElasticAdv::DecodeMetric(UINT16 value)
     }
 }  // end ElasticAdv::DecodeMetric()
 
-bool ElasticAdv::InitFromBuffer(void*           bufferPtr, 
-                                unsigned int    numBytes, 
+bool ElasticAdv::InitFromBuffer(void*           bufferPtr,
+                                unsigned int    numBytes,
                                 bool            freeOnDestruct)
 {
-    if (NULL != bufferPtr) 
+    if (NULL != bufferPtr)
         AttachBuffer(bufferPtr, numBytes, freeOnDestruct);
     else
         ProtoPkt::SetLength(0);
@@ -538,7 +538,7 @@ bool ElasticAdv::GetAdvAddr(ProtoAddress& addr) const
 {
     ProtoAddress::Type addrType;
     unsigned int addrLen;
-    switch (GetAddressType())
+    switch (GetAdvType())
     {
         case ADDR_IPV4:
             addrType = ProtoAddress::IPv4;
@@ -559,8 +559,8 @@ bool ElasticAdv::GetAdvAddr(ProtoAddress& addr) const
     return addr.SetRawHostAddress(addrType, (const char*)GetBuffer32(OffsetAdvAddr()), addrLen);
 }  // end ElasticAdv::GetAdvAddr()
 
-bool ElasticAdv::InitIntoBuffer(void*         bufferPtr, 
-                                unsigned int  bufferBytes, 
+bool ElasticAdv::InitIntoBuffer(void*         bufferPtr,
+                                unsigned int  bufferBytes,
                                 bool          freeOnDestruct)
 {
     unsigned int minLength = OFFSET_CLASS + 1;
@@ -571,7 +571,7 @@ bool ElasticAdv::InitIntoBuffer(void*         bufferPtr,
         else
             AttachBuffer(bufferPtr, bufferBytes, freeOnDestruct);
     }
-    else if (GetBufferLength() < minLength) 
+    else if (GetBufferLength() < minLength)
     {
         return false;
     }
@@ -750,7 +750,7 @@ bool ElasticAdv::SetAdvAddr(AddressType addrType, const char* addrPtr, unsigned 
     else if (minLength > GetLength())
     {
         SetMsgLength(minLength);
-    } 
+    }
     UINT8 field = GetUINT8(OFFSET_VTYPE) & 0xf0;
     field |= (UINT8)addrType;
     SetUINT8(OFFSET_VTYPE, field);
@@ -782,13 +782,13 @@ ElasticNack::ElasticNack(ElasticMsg& elasticMsg)
 {
     InitFromBuffer(elasticMsg.AccessBuffer(), elasticMsg.GetBufferLength());
 }
-        
+
 ElasticNack::~ElasticNack()
 {
 }
-            
-bool ElasticNack::InitIntoBuffer(void*           bufferPtr, 
-                                 unsigned int    bufferBytes, 
+
+bool ElasticNack::InitIntoBuffer(void*           bufferPtr,
+                                 unsigned int    bufferBytes,
                                  bool            freeOnDestruct)
 {
     unsigned int minLength = OFFSET_UPSTREAM*4;
@@ -799,7 +799,7 @@ bool ElasticNack::InitIntoBuffer(void*           bufferPtr,
         else
             AttachBuffer(bufferPtr, bufferBytes, freeOnDestruct);
     }
-    else if (GetBufferLength() < minLength) 
+    else if (GetBufferLength() < minLength)
     {
         return false;
     }
@@ -807,7 +807,7 @@ bool ElasticNack::InitIntoBuffer(void*           bufferPtr,
     SetMsgLength(2);
     return true;
 }  // end ElasticNack::InitIntoBuffer()
-        
+
 bool ElasticNack::SetUpstreamAddress(const ProtoAddress& addr)
 {
     AddressType utype = ADDR_INVALID;
@@ -828,7 +828,7 @@ bool ElasticNack::SetUpstreamAddress(const ProtoAddress& addr)
     }
     // Need space for address length + seq start/stop and padding
     unsigned int minLength = OFFSET_UPSTREAM*4 + 4*GetAddressFieldWords(utype);
-    if (GetBufferLength() < minLength) 
+    if (GetBufferLength() < minLength)
     {
         return false;
     }
