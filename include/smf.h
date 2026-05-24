@@ -110,7 +110,10 @@ class Smf
                               const ProtoAddress&   localAddr,
                               const ProtoAddress*   remoteAddr = NULL,
                               bool                  mapped = false)
-                  : iface_index(ifaceIndex), local_addr(localAddr), remote_addr(remoteAddr)
+                  : iface_index(ifaceIndex),
+                    local_addr(localAddr),
+                    remote_addr(NULL != remoteAddr ? *remoteAddr : ProtoAddress()),
+                    mapped(mapped)
                 {
                     unsigned int len = 0;
                     if (NULL != remoteAddr)
