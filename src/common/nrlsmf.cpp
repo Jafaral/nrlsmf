@@ -2244,7 +2244,9 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             }
         }
 
-        // Now parse the rest as addresses
+        // Now parse the rest as destination addresses
+        // TBD - allow items to be full flow descriptions
+        //       with optional source address,protocol and traffic class specs
         do
         {
             ProtoAddress dstAddr;
