@@ -183,9 +183,11 @@ class Smf
                 InterfaceInfo* FindInfo(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
                 {
                     char addrInfo[16 + 16];
-                    memcpy(addrInfo, localAddr.GetRawHostAddress(), localAddr.GetLength());
-                    memcpy(addrInfo+localAddr.GetLength(), remoteAddr.GetRawHostAddress(), remoteAddr.GetLength());
-                    return Find(addrInfo, 8*(localAddr.GetLength() + remoteAddr.GetLength()));
+                    unsigned int len = remoteAddr.GetLength();
+                    memcpy(addrInfo, remoteAddr.GetRawHostAddress(), len);
+                    memcpy(addrInfo+len, localAddr.GetRawHostAddress(), localAddr.GetLength());
+                    len += localAddr.GetLength();
+                    return Find(addrInfo, 8*len);
                 }
                 unsigned int GetIndex(const ProtoAddress& addr) const
                 {
