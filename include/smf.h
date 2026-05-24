@@ -216,12 +216,19 @@ class Smf
                 void RemoveAddress(const ProtoAddress& localAddr, const ProtoAddress* remoteAddr = NULL)
                 {
                     char addrInfo[16 + 16];
-                    unsigned int len = localAddr.GetLength();
-                    memcpy(addrInfo, localAddr.GetRawHostAddress(), len);
+                    unsigned int len;
                     if (NULL != remoteAddr)
                     {
-                        memcpy(addrInfo+len, remoteAddr->GetRawHostAddress(), remoteAddr->GetLength());
-                        len += remoteAddr->GetLength();
+                        // Tunnel keys are stored as remote||local (see InterfaceInfo constructor)
+                        len = remoteAddr->GetLength();
+                        memcpy(addrInfo, remoteAddr->GetRawHostAddress(), len);
+                        memcpy(addrInfo+len, localAddr.GetRawHostAddress(), localAddr.GetLength());
+                        len += localAddr.GetLength();
+                    }
+                    else
+                    {
+                        len = localAddr.GetLength();
+                        memcpy(addrInfo, localAddr.GetRawHostAddress(), len);
                     }
                     InterfaceInfo* info = Find(addrInfo, 8*len);
                     if (NULL != info)
@@ -288,7 +295,7 @@ class Smf
             return true;
         }
         void RemoveTunnelInfo(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
-            {iface_info_table.RemoveAddress(remoteAddr, &localAddr);}
+            {iface_info_table.RemoveAddress(localAddr, &remoteAddr);}
 
         unsigned int GetTunnelIndex(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
         {
