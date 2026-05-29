@@ -1717,7 +1717,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
     return best_relay;
 
 }  // end MulticastFIB::Entry::GetBestUpstreamRelay()
-        
+
 MulticastFIB::TokenBucket* MulticastFIB::Entry::GetBucket(unsigned int ifaceIndex)
 {
     TokenBucket* bucket = bucket_list.FindBucket(ifaceIndex);

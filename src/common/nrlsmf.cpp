@@ -7148,8 +7148,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
         bool match;
         if (srcCapIsGRE)
         {
-            match = true;  // assume anything in the tunnel is for me?
-            //match = dstMacAddr.IsMulticast() || dstMacAddr.HostIsEqual(srcCap.GetTunnelLocalAddr());
+            match = dstMacAddr.IsMulticast() || smf.IsOwnAddress(dstAddr);
             if (isUnicast)
             {
                 // doesn't seem to be necessary to fix

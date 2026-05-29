@@ -110,8 +110,9 @@ class Smf
                               const ProtoAddress&   localAddr,
                               const ProtoAddress*   remoteAddr = NULL,
                               bool                  mapped = false)
-                  : iface_index(ifaceIndex), local_addr(localAddr), remote_addr(remoteAddr)
+                  : iface_index(ifaceIndex), local_addr(localAddr), is_mapped(mapped)
                 {
+                    // address_info_key is tuple of [remoteAddr]localAddr  (i.e. remoteAddr is optional)
                     unsigned int len = 0;
                     if (NULL != remoteAddr)
                     {
@@ -141,7 +142,8 @@ class Smf
                 ProtoAddress local_addr;
                 unsigned int local_mask_len;
                 ProtoAddress remote_addr;             // invalid for non-tunnels, INADDR_ANY for mGRE tunnels
-                bool         mapped;                  // false for interfaces assigned to the interface, true for "mapped" association
+                bool         is_mapped;               // false for interfaces assigned to the interface, true for "mapped" association
+                                                      // (stored but not yet used for lookup or policy)
                 char         address_info_key[16+16]; // big enough for IPv6
                 unsigned int address_info_size;       // in bits
         };  // end class Smf::InterfaceInfo
@@ -210,14 +212,18 @@ class Smf
                 }
                 void RemoveAddress(const ProtoAddress& localAddr, const ProtoAddress* remoteAddr = NULL)
                 {
-                    char addrInfo[16 + 16];
-                    unsigned int len = localAddr.GetLength();
-                    memcpy(addrInfo, localAddr.GetRawHostAddress(), len);
+                    // addrInfoKey is tuple of [remoteAddr]localAddr  (i.e. remoteAddr is optional)
+                    char addrInfoKey[16 + 16];
+                    unsigned int len = 0;
                     if (NULL != remoteAddr)
                     {
-                        memcpy(addrInfo+len, remoteAddr->GetRawHostAddress(), remoteAddr->GetLength());
-                        len += remoteAddr->GetLength();
+                        // remoteAddr is first in key for FindTunnelInfo() for mGRE to work
+                        len = remoteAddr->GetLength();
+                        memcpy(addrInfoKey, remoteAddr->GetRawHostAddress(), len);
                     }
+                    local_mask_len = 8*localAddr.GetLength();
+                    memcpy(addrInfoKey+len, localAddr.GetRawHostAddress(), localAddr.GetLength());
+                    len += localAddr.GetLength();
                     InterfaceInfo* info = Find(addrInfo, 8*len);
                     if (NULL != info)
                     {
@@ -283,7 +289,7 @@ class Smf
             return true;
         }
         void RemoveTunnelInfo(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
-            {iface_info_table.RemoveAddress(remoteAddr, &localAddr);}
+            {iface_info_table.RemoveAddress(localAddr, &remoteAddr);}
 
         unsigned int GetTunnelIndex(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
         {
@@ -324,7 +330,7 @@ class Smf
             }
         }
 
-         InterfaceInfoTable& AccessInterfaceInfoTable()
+        InterfaceInfoTable& AccessInterfaceInfoTable()
             {return iface_info_table;}
 
         UINT16 GetIPv4LocalSequence(const ProtoAddress* dstAddr,

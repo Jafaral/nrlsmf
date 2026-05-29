@@ -1200,7 +1200,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                                     upstreamIface = GetInterface(upstreamIndex);
                                                 if (NULL != upstreamIface)
                                                 {
-                                                    PLOG(PL_ALWAYS, "Smf::ProcessPacket() EM_ACK mapped to Ethertype interface '%s'\n",
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to Ethertype interface '%s'\n",
                                                                     upstreamIface->GetNameStr());
                                                 }
                                             }
@@ -1223,7 +1223,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                                         upstreamIface = GetInterface(upstreamIndex);
                                                     if (NULL != upstreamIface)
                                                     {
-                                                        PLOG(PL_ALWAYS, "Smf::ProcessPacket() EM_ACK mapped to mGRE interface '%s'\n",
+                                                        PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to mGRE interface '%s'\n",
                                                                         upstreamIface->GetNameStr());
                                                     }
                                                 }
@@ -1232,14 +1232,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                                 {
                                                     // 2b) It's an EM_ACK in reponse to a packet from a P2P GRE tunnel where
                                                     //     upstream/src addrs == tunnel local/remote endpoint addrs (Case B2)
-                                                    PLOG(PL_ALWAYS, "Smf::ProcessPacket() EM_ACK mapped to GRE interface '%s'\n",
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to GRE interface '%s'\n",
                                                                     upstreamIface->GetNameStr());
                                                 }
                                                 else if ((0 != (upstreamIndex = GetInterfaceIndex(upstreamAddr))) &&
                                                          (NULL != (upstreamIface = GetInterface(upstreamIndex))))
                                                 {
                                                     // It's an EM_ACK in response to an EM_ADV sent on upstreamIface (Case B1)
-                                                    PLOG(PL_ALWAYS, "Smf::ProcessPacket() EM_ACK mapped to interface '%s'\n",
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to interface '%s'\n",
                                                                     upstreamIface->GetNameStr());
                                                 }
                                                 // else not for me
