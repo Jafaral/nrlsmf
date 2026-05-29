@@ -221,10 +221,9 @@ class Smf
                         len = remoteAddr->GetLength();
                         memcpy(addrInfoKey, remoteAddr->GetRawHostAddress(), len);
                     }
-                    local_mask_len = 8*localAddr.GetLength();
                     memcpy(addrInfoKey+len, localAddr.GetRawHostAddress(), localAddr.GetLength());
                     len += localAddr.GetLength();
-                    InterfaceInfo* info = Find(addrInfo, 8*len);
+                    InterfaceInfo* info = Find(addrInfoKey, 8*len);
                     if (NULL != info)
                     {
                         Remove(*info);
