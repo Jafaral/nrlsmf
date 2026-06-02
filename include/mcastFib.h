@@ -398,7 +398,7 @@ class MulticastFIB
                 UINT8 GetAdvTTL() const
                     {return adv_state.GetAdvTTL();}
                 UINT8 GetAdvHopCount() const
-                    {return adv_state.GetAdvTTL();}
+                    {return adv_state.GetAdvHopCount();}
 
                 bool LinkQualityIsValid() const
                     {return link_quality >= 0.0;}
