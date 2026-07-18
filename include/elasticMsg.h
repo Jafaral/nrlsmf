@@ -239,7 +239,7 @@ class ElasticAck : public ElasticMsg
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      | Msg Type = 2  |     Msg Len   |          DPD ID               |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//      |S|P|C|R| atype |  resv | vtype |    protocol   | traffic class |
+//      |S|P|C|M| atype |  resv | vtype |    protocol   | traffic class |
 //      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //      |                                                               |
 //      +                       Destination Address                     +
@@ -261,12 +261,54 @@ class ElasticAck : public ElasticMsg
 // S        : source addr present (1 bit)  
 // P        : protocol type valid (1 bit)
 // C        : traffic class valid (1 bit)
-// R        : metric flag present (1 bit)
+// M        : metric value valid  (1 bit)  : TBD - support metric types and flow requirements
+//
+// 'vtype' indicates "Advertiser Address" type
+// "Advertiser Address" is originator of advertisement for flow (used for Dup Adv Detection)
 
 // TBD - Create TLV format for flow/path metrics
 
 // Note an EM-ADV messsage is very similar to an EM-ACK message since it
 // also contains a flow description as a dominant portion of its content.
+
+// NEW AND IMPROVED Elastic ADV message flow item
+//
+//       0             1               2               3               4
+//       0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      | Msg Type = 2  |     Msg Len   |          DPD ID               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |S|P|C|M        | atype | vtype |    protocol   | traffic class |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                                                               |
+//      +                       Destination Address                     +
+//      |                                                               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                                                               |
+//      +                        [Source Address]                       +
+//      |                                                               |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |      ttl      |   hop count   |   valid_time  |R|D|T|C|L|Q| - |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |   flow_rate   |  flow_delay   | flow_tolerance|    reserved   |  <--- flow requirements
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      | path_capacity |  path_latency |  path_quality |    reserved   |  <--- path metrics
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//      |                                                               |
+//      +                       Advertiser Address                      +
+//      |                              ...                              |
+//      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//
+// Rate Delay Tolerance Capactiy Latency Quality
+// FLAGS:
+//
+// S        : source addr present (1 bit)  
+// P        : protocol type valid (1 bit)
+// C        : traffic class valid (1 bit)
+// M        : metric value valid  (1 bit)  : TBD - support metric types and flow requirements
+//
+// "Advertiser Address" is originator of advertisement for flow (used for Dup Adv Detection)
+// "vtype" indicates "Advertiser Address" type
 
 class ElasticAdv : public ElasticMsg
 {

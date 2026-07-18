@@ -178,7 +178,7 @@ class SmfDpd
 class SmfDpdTable : public SmfDpd
 {
     public:
-        SmfDpdTable(unsigned int pktSizeMax);
+        SmfDpdTable(unsigned int pktCountMax);
         ~SmfDpdTable();
 
         enum {MAX_ID_BITS = (3*128)};

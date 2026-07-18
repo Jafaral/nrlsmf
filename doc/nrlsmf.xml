@@ -6,50 +6,49 @@
   <articleinfo>
     <title><inlinemediaobject>
         <imageobject>
-          <imagedata align="left" fileref="resources/smfLogo.png" scale="25"
-                     valign="middle"/>
+          <imagedata align="left" fileref="resources/smfLogo.png" scale="100"/>
         </imageobject>
       </inlinemediaobject> <emphasis>nrlsmf</emphasis> User's
     Guide<inlinemediaobject>
         <imageobject>
           <imagedata align="right" fileref="resources/ProteanLogo.png"
-                     scale="30" valign="top"/>
+                     scale="30"/>
         </imageobject>
       </inlinemediaobject></title>
 
     <titleabbrev><emphasis>nrlsmf</emphasis> User's Guide</titleabbrev>
 
     <abstract>
-      <para>The NRL Simplified Multicast Forwarding
-      (<emphasis>nrlsmf</emphasis>) project includes software for a user-space
-      IP Multicast forwarding engine. This software was developed by the
-      <ulink url="http://www.nrl.navy.mil/">Naval Research Laboratory</ulink>
-      (NRL) PROTocol Engineering Advanced Networking (<ulink
-      url="http://protean.itd.nrl.navy.mil/">PROTEAN</ulink>) Research Group.
-      The goal of this effort is to provide an implementation of experimental
-      techniques for robust, efficient distribution of IP Multicast packets in
-      dynamic, wireless networks such as Mobile Ad-hoc Networks
-      (MANETs).</para>
+      <para>The NRL Simplified Multi cast Forwarding
+      (<application>nrlsmf</application>) project includes software for a
+      user-space IP Multicast forwarding engine. This software was developed
+      by the <ulink url="http://www.nrl.navy.mil/">Naval Research
+      Laboratory</ulink> (NRL) PROTocol Engineering Advanced Networking
+      (<ulink url="http://protean.itd.nrl.navy.mil/">PROTEAN</ulink>) Research
+      Group. The goal of this effort is to provide an implementation of
+      experimental techniques for robust, efficient distribution of IP
+      Multicast packets in dynamic, wireless networks such as Mobile Ad-hoc
+      Networks (MANETs).</para>
     </abstract>
   </articleinfo>
 
   <sect1>
     <title>Overview</title>
 
-    <para>The <emphasis>nrlsmf</emphasis> application can be run as a
+    <para>The <application>nrlsmf</application> application can be run as a
     stand-alone application capable of providing "classic" flooding of
     broadcast and multicast traffic for a specified network interface or can
     be used in conjunction with a controlling program to perform more
     sophisticated multicast forwarding. An interprocess communication "remote
     control" interface is provided so that a compatible program (e.g.
-    <emphasis><ulink
-    url="http://cs.itd.nrl.navy.mil/work/olsr">nrlolsrd</ulink></emphasis>)
-    may issue run-time commands to <emphasis>nrlsmf</emphasis> to dynamically
-    control the multicast forwarding process. Both IPv4 and IPv6 operation are
-    supported. Versions of <emphasis>nrlsmf</emphasis> can be built for the
-    following operating systems: Linux, MacOS, BSD, Win32, and WinCE. The code
-    base also supports working simulation models of SMF in the
-    <emphasis>ns-2</emphasis> and OPNET discrete event simulation
+    <application><ulink
+    url="http://cs.itd.nrl.navy.mil/work/olsr">nrlolsrd</ulink></application>)
+    may issue run-time commands to <application>nrlsmf</application> to
+    dynamically control the multicast forwarding process. Both IPv4 and IPv6
+    operation are supported. Versions of <application>nrlsmf</application> can
+    be built for the following operating systems: Linux, MacOS, BSD, Win32,
+    and WinCE. The code base also supports working simulation models of SMF in
+    the <application>ns-2</application> and OPNET discrete event simulation
     environments. In the future it is hoped that the SMF functionality might
     be included as part of operating system kernels.</para>
   </sect1>
@@ -57,77 +56,86 @@
   <sect1 id="TheoryOfOperation">
     <title>Theory of Operation</title>
 
-    <para>The <emphasis>nrlsmf</emphasis> program acts as a user-space packet
-    forwarding engine by promiscuously "sniffing" packets specified interfaces
-    or intercepting packets using operating system firewall facilities and
-    then retransmitting packets (using its local network interface MAC
-    address) according to set forwarding rules. Packets can be received and
-    possibly forwarded on a single, specified network interface for operation
-    within a "routing area" corresponding to that single (generally wireless)
-    interface. And, <emphasis>nrlsmf</emphasis> also provides for packet
-    reception and forwarding across multiple interfaces to allow for
-    configurable gateway operation and/or multicast distribution across a set
-    of interfaces. Only incoming (non-locally generated), non-link-local IP
-    Multicast packets with time-to-live (TTL) greater than one are considered
-    for forwarding. Duplicate packet detection is an important facet of
-    wireless network multicast forwarding since packets often must be
-    forwarded on the same interface as they are received. Thus, neighbors'
-    subsequent retransmission of forwarded packets will be "heard" and the
-    local forwarding engine must discriminate between new packets and
-    previously-forwarded packets to avoid unnecessary retransmission.</para>
+    <para>The <application>nrlsmf</application> program acts as a user-space
+    packet forwarding engine by promiscuously "sniffing" packets specified
+    interfaces or intercepting packets using operating system firewall
+    facilities and then retransmitting packets (using its local network
+    interface MAC address) according to set forwarding rules. Packets can be
+    received and possibly forwarded on a single, specified network interface
+    for operation within a "routing area" corresponding to that single
+    (generally wireless) interface. And, <application>nrlsmf</application>
+    also provides for packet reception and forwarding across multiple
+    interfaces to allow for configurable gateway operation and/or multicast
+    distribution across a set of interfaces. Only incoming (non-locally
+    generated), non-link-local IP Multicast packets with time-to-live (TTL)
+    greater than one are considered for forwarding. Duplicate packet detection
+    is an important facet of wireless network multicast forwarding since
+    packets often must be forwarded on the same interface as they are
+    received. Thus, neighbors' subsequent retransmission of forwarded packets
+    will be "heard" and the local forwarding engine must discriminate between
+    new packets and previously-forwarded packets to avoid unnecessary
+    retransmission.</para>
+  </sect1>
+
+  <sect1>
+    <title>Build Instructions</title>
+
+    <para>The <command>nrlsmf</command> source code is available on Github at
+    <ulink
+    url="https://github.com/USNavalResearchLaboratory/nrlsmf">https://github.com/USNavalResearchLaboratory/nrlsmf</ulink>.
+    Note that <command>nrlsmf</command> depends upon NRL Protolib which is
+    included as a submodule within the <command>nrlsmf</command> repository.
+    Use the follow command to clone the <command>nrlsmf</command> repositiory
+    with the Protolib submodule included:</para>
+
+    <literallayout><literal>git clone --recurse-submodules https://github.com/USNavalResearchLaboratory/nrlsmf.git</literal></literallayout>
+
+    <para>Then use the following commands to change to the "makefiles"
+    directory and build with the appropriate Makeifile.&lt;system&gt; for your
+    operating environment. Note that build files for Windows (with some
+    additional dependencies) and Android are available and this document will
+    be updated to provide instructions for those systems. The following
+    example is for Linux to build "legacy" <command>nrlsmf</command> without
+    Elastic Multicast support.</para>
+
+    <programlisting>cd nrlsmf/makefiles
+make -f Makefile.linux nrlsmf</programlisting>
+
+    <sect2>
+      <title>Elastic Multicast build</title>
+
+      <para>Currently a separate build command is used to build
+      <command>nrlsmf</command> with the Elastic Multicast routing capability.
+      Note this separate build process will be eliminated in the near future
+      and Elastic Multicast routing will be a standard feature of the regular
+      <command>nrlsmf</command> build. Since Elastic Multicast and some
+      related capabilities were developed as experimental "add-ons" to SMF,
+      the separate build command was defined for initial work. To build
+      <command>nrlsmf</command> with the Elastic Multicast features included,
+      use:</para>
+
+      <programlisting>cd nrlsmf/makefiles
+make -f Makefile.linux elastic</programlisting>
+
+      <para>This will build an <command>nrlsmf</command> executable with the
+      additional features and command available.</para>
+    </sect2>
   </sect1>
 
   <sect1 id="Usage">
     <title>Usage</title>
 
-    <para>The <emphasis>nrlsmf</emphasis> program provides a command-line
-    syntax with which it can be launched. Many of the same commands (see <link
-    linkend="Commands">Commands</link>) available via the command-line may be
-    applied during run-time using the "remote control" interprocess control
-    interface (see <link linkend="RemoteControl">Remote Control
-    Interface</link>). To launch <emphasis>nrlsmf</emphasis>, use the
-    following command-line syntax:</para>
-
-    <para><informalexample>
-        <programlisting><?dbfo keep-together="always"?>nrlsmf [ipv6][resequence {on|off}][nhdp &lt;ifaceList&gt;]
-       [add [&lt;group&gt;,]{cf|smpr|ecds|push|rpush|merge|rmerge},&lt;ifaceList&gt;]
-       [remove {&lt;group&gt; | [&lt;group&gt;,]&lt;ifaceList&gt;}   
-       [cf &lt;ifaceList&gt;][smpr &lt;ifaceList&gt;][ecds &lt;ifaceList&gt;]
-       [push &lt;srcIface&gt;,&lt;dstIfaceList&gt;][rpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
-       [merge &lt;ifaceList&gt;][rmerge &lt;ifaceList&gt;]
-       [clear {&lt;ifaceList&gt;|all}]
-       [unpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;][unmerge &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
-       [forward {on|off}][relay {on|off}]
-       [unicast {unicastPrefix | off}]
-       [dscpCapture &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
-       [hash &lt;algorithm&gt;][idpd {on | off}][window {on|off}]
-       [firewallForward {on|off}][firewallCapture {on|off}]
-       [tap &lt;tapInstanceName&gt;]
-       [instance &lt;instanceName&gt;][debug &lt;debugLevel&gt;][log &lt;logFile&gt;
-
-nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
-       [add [&lt;group&gt;,]{cf|smpr|ecds|push|rpush|merge|rmerge},&lt;ifaceList&gt;]
-       [remove {&lt;group&gt; | [&lt;group&gt;,]&lt;ifaceList&gt;}
-       [cf &lt;ifaceList&gt;][smpr &lt;ifaceList&gt;][ecds &lt;ifaceList&gt;]
-       [push &lt;srcIface&gt;,&lt;dstIfaceList&gt;] [rpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
-       [merge &lt;ifaceList&gt;][rmerge &lt;ifaceList&gt;]
-       [forward {on|off}][relay {on|off}][delayoff &lt;value&gt;]
-       [device &lt;vifName&gt;,&lt;ifaceName&gt;[,&lt;addr&gt;[/&lt;maskLen&gt;][,&lt;addr2&gt;[/&lt;maskLen&gt;] ...]]]
-       [rate [&lt;iface&gt;,]&lt;bits/sec&gt;][queue [&lt;iface&gt;,]&lt;queueLimit&gt;]
-       [unicast {unicastPrefix | off}]
-       [dscpCapture &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
-       [dscpRelease &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
-       [ihash &lt;algorithm&gt;][hash &lt;algorithm&gt;]
-       [idpd {on | off}][window {on | off}]
-       [instance &lt;instanceName&gt;][smfServer &lt;serverName&gt;]
-       [resequence {on|off}][ttl &lt;value&gt;][boost {on|off}]
-       [debug &lt;debugLevel&gt;][log &lt;debugLogFile&gt;]</programlisting>
-      </informalexample></para>
+    <para>The <application>nrlsmf</application> program provides a
+    command-line syntax with which it can be launched. Many of the same
+    commands (see <link linkend="Commands">Commands</link>) available via the
+    command-line may be applied during run-time using the "remote control"
+    interprocess control interface (see <link linkend="RemoteControl">Remote
+    Control Interface</link>).</para>
 
     <sect2 id="ExampleUsage">
       <title>Usage Examples</title>
 
-      <para>To run <emphasis>nrlsmf</emphasis> to modify outbound,
+      <para>To run <application>nrlsmf</application> to modify outbound,
       locally-generated multicast packets for duplicate packet detection
       <emphasis>and</emphasis> to use "classical flooding" (CF) forwarding
       rules for packets received/forwarded on MANET interface "eth1":</para>
@@ -137,10 +145,11 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
       <para>Note that a MANET SMF forwarding rule like "<literal>cf</literal>"
       (or the others including "<literal>smpr</literal>",
       "<literal>ecds</literal>", etc) can be applied on a single interface or
-      a group of interfaces. A single instance of <emphasis>nrlsmf</emphasis>
-      will distribute traffic among all interfaces. If independent interfaces
-      (or groups) are desired, then the user should invoke multiple instances
-      of <emphasis>nrlsmf</emphasis>. For example, the syntaxes:</para>
+      a group of interfaces. A single instance of
+      <application>nrlsmf</application> will distribute traffic among all
+      interfaces. If independent interfaces (or groups) are desired, then the
+      user should invoke multiple instances of
+      <application>nrlsmf</application>. For example, the syntaxes:</para>
 
       <para>"<literal>nrlsmf cf eth0 cf eth1</literal>"</para>
 
@@ -150,27 +159,28 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
 
       <para>are equivalent. Both result in flooding of packets received on
       interfaces "eth0" and "eth1" to/among both of these interfaces. If two
-      <emphasis>separate</emphasis> instances of <emphasis>nrlsmf</emphasis>
-      are launched (one per interface) using the syntax</para>
+      <emphasis>separate</emphasis> instances of
+      <application>nrlsmf</application> are launched (one per interface) using
+      the syntax</para>
 
       <para>"<literal>nrlsmf cf eth0; nrlsmf cf eth1</literal>"</para>
 
       <para>then the flooding is limited to each respective interface (i.e.
       packets received on "eth0" are possibly retransmitted only on "eth0").
-      Future versions of <emphasis>nrlsmf</emphasis> _might_ provide the
+      Future versions of <application>nrlsmf</application> _might_ provide the
       ability to set up multiple interface groupings with a single
-      <emphasis>nrlsmf</emphasis> instance.</para>
+      <application>nrlsmf</application> instance.</para>
 
-      <para>Using <emphasis>nrlsmf</emphasis> as a "gateway" between a typical
-      network interface (e.g. Ethernet) and a MANET interface (e.g. 802.11 in
-      ad hoc mode) can be accomplished using the "push" or "merge" commands
-      (or their "r" (resequencing) variants). For example if it is desired to
-      "push" multicast traffic from a non-MANET interface (perhaps connected
-      to a multicast router) "eth0" to a MANET interface "eth1", resequencing
-      (or adding IPv6 SMF_DPD option header), run "classical flooding" on the
-      MANET interface, _and_ push multicast traffic originated on the MANET
-      area to the non-MANET interface, the following syntax could be
-      used:</para>
+      <para>Using <application>nrlsmf</application> as a "gateway" between a
+      typical network interface (e.g. Ethernet) and a MANET interface (e.g.
+      802.11 in ad hoc mode) can be accomplished using the "push" or "merge"
+      commands (or their "r" (resequencing) variants). For example if it is
+      desired to "push" multicast traffic from a non-MANET interface (perhaps
+      connected to a multicast router) "eth0" to a MANET interface "eth1",
+      resequencing (or adding IPv6 SMF_DPD option header), run "classical
+      flooding" on the MANET interface, _and_ push multicast traffic
+      originated on the MANET area to the non-MANET interface, the following
+      syntax could be used:</para>
 
       <para><literal>nrlsmf rpush eth0,eth1 push eth1,eth0 cf
       eth1</literal></para>
@@ -182,9 +192,9 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
       MANET interface "eth1" to the non-MANET "eth0" interface, assuming that
       any traffic on MANET interface has already been "sequenced" (or tagged)
       appropriately for SMF duplicate packet detection. Note that
-      <emphasis>nrlsmf</emphasis> maintains duplicate packet detection state
-      for the "rpush" associate so that packet relayed from eth0 to eth1 are
-      not reintroduced back to eth0 from eth1 even when other neighboring
+      <application>nrlsmf</application> maintains duplicate packet detection
+      state for the "rpush" associate so that packet relayed from eth0 to eth1
+      are not reintroduced back to eth0 from eth1 even when other neighboring
       MANET nodes may retransmit those packets to support SMF data
       dissemination. Finally, the "<literal>cf eth1</literal>" command
       provides "classical flooding" on the presumably MANET eth1 interface
@@ -194,16 +204,22 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
       could be used here instead of "<literal>cf</literal>" for more efficient
       group data distribution if supporting neighborhood discovery protocol
       (NHDP) (or equivalent) information is operating and controlling
-      <emphasis>nrlsmf</emphasis> state. Note that it is planned to integrate
-      NHDP support into <emphasis>nrlsmf</emphasis> in a future
-      version.</para>
+      <application>nrlsmf</application> state. Note that it is planned to
+      integrate NHDP support into <application>nrlsmf</application> in a
+      future version.</para>
+    </sect2>
+
+    <sect2>
+      <title>Elastic Multicast Usage</title>
+
+      <para>TBD</para>
     </sect2>
   </sect1>
 
   <sect1 id="Commands">
     <title>Commands</title>
 
-    <para>The <emphasis>nrlsmf</emphasis> program supports a variety of
+    <para>The <application>nrlsmf</application> program supports a variety of
     commands that can be invoked via command-line at startup or at run-time
     using the "remote control" interprocess communication interfaces that is
     provided. There a four rough categories of commands. These include:</para>
@@ -211,12 +227,17 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
     <orderedlist>
       <listitem>
         <para>"Operating Mode Commands" to control or enable general
-        <emphasis>nrlsmf</emphasis> capabilities and features.</para>
+        <application>nrlsmf</application> capabilities and features. Many of
+        these commands can also be invoked at runtime via the remote-control
+        interface set up by the <application>nrlsmf</application>
+        <command>instance</command> &lt;instanceName&gt; command for dynamic
+        changes to <command>nrlsmf</command> configuration and
+        operation.</para>
       </listitem>
 
       <listitem>
-        <para>"MANET Interface Commands" to enable SMF operation on or among
-        sets of presumably wireless network interfaces.</para>
+        <para>"Interface Commands" to enable SMF protocol operations on or
+        among sets (aka Interface Groups) of network interfaces.</para>
       </listitem>
 
       <listitem>
@@ -229,8 +250,8 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
 
       <listitem>
         <para>"Remote-only Commands" for dynamic, run-time control of specific
-        aspects of <emphasis>nrlsmf</emphasis> operation. These commands are
-        not intended for use via the command-line interface.</para>
+        aspects of <application>nrlsmf</application> operation. These commands
+        are not intended for use via the command-line interface.</para>
       </listitem>
     </orderedlist>
 
@@ -244,6 +265,23 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
     <emphasis>required</emphasis> that these commands precede "Interface" or
     "Gateway" commands.</para>
 
+    <para>As an alternative to increasingly complex nslrmf command-lines, a
+    JSON configuration file option is supported. To support initial transition
+    to use of JSON configuration files, an <application>nrlsmf</application>
+    <command>save</command> <parameter>&lt;fileName&gt;</parameter> command is
+    available that will write a JSON configuration file upon
+    <application>nrlsmf</application> exit using the state configured by the
+    command-line and any runtime commands. The
+    <application>nrlsmf</application> load &lt;fileName&gt; command is
+    available to load such confguration files. The configuration file option
+    is still a "work in progress" and some command-line options are not yet
+    fully reflected in the configuration file. Additionally, a change from the
+    current 'bespoke' JSON format to one governed by a YANG data model is
+    planned. A nice aspect of the JSON configuration is that its structure
+    helps illustrate the relationship of various
+    <application>nrlsmf</application> configuration elements including global
+    attritibute, interface groups, and per-interface attributes.</para>
+
     <table>
       <title>Operating Mode Commands</title>
 
@@ -253,6 +291,24 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
         <colspec colname="Description" colwidth="2.5*"/>
 
         <tbody>
+          <row>
+            <entry align="left"><literal>load
+            &lt;filename.json&gt;</literal></entry>
+
+            <entry>Load an <application>nrlsmf</application> JSON
+            configuration file using the specified
+            <parameter>&lt;filename.json&gt;</parameter>.</entry>
+          </row>
+
+          <row>
+            <entry align="left"><literal>save
+            &lt;filename.json&gt;</literal></entry>
+
+            <entry>Upon <application>nrlsmf</application> exit, save a JSON
+            configuration file to the designated
+            <parameter>&lt;filename.json&gt;</parameter>.</entry>
+          </row>
+
           <row>
             <entry align="left"><literal>ipv6</literal></entry>
 
@@ -278,24 +334,24 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             <entry>When I-DPD is disabled ("<literal>idpd off</literal>") and
             a hashing algorithm is enabled via this command (i.e.,
             &lt;<literal>algorithm</literal>&gt; not equal to "NONE"
-            (case-insensitive)), <emphasis>nrlsmf</emphasis> uses a hash-based
-            duplicate packet detection (H-DPD per the SMF specification)
-            approach to uniquely identify packets for forwarding. If this
-            "<literal>hash</literal>" command is used in conjunction with
-            "<literal>idpd on</literal>", I-DPD is performed for all packets
-            except non-fragmented, non-IPSec IPv6 packets. For those excepted
-            IPv6 packets, H-DPD is used and the SMF "Hash Assist Value" (HAV)
-            is applied as needed when the "<literal>resequence on</literal>"
-            option or "<literal>rpush</literal>/<literal>rmerge</literal>"
-            operation is configured. Note that, depending upon the hash
-            algorithm selected, this technique may be somewhat
-            processing-intensive compared to the default approach that assumes
-            an embedded unique identifier ("packetId") in packet headers. The
-            "<literal>hash</literal>" and "<literal>ihash</literal>" commands
-            are mutually exclusive and their use supercedes any prior hashing
-            configuration. If I-DPD is disabled and no hash algorithm is
-            specfiied, no duplicate packet detection occurs. (default =
-            "NONE")</entry>
+            (case-insensitive)), <application>nrlsmf</application> uses a
+            hash-based duplicate packet detection (H-DPD per the SMF
+            specification) approach to uniquely identify packets for
+            forwarding. If this "<literal>hash</literal>" command is used in
+            conjunction with "<literal>idpd on</literal>", I-DPD is performed
+            for all packets except non-fragmented, non-IPSec IPv6 packets. For
+            those excepted IPv6 packets, H-DPD is used and the SMF "Hash
+            Assist Value" (HAV) is applied as needed when the
+            "<literal>resequence on</literal>" option or
+            "<literal>rpush</literal>/<literal>rmerge</literal>" operation is
+            configured. Note that, depending upon the hash algorithm selected,
+            this technique may be somewhat processing-intensive compared to
+            the default approach that assumes an embedded unique identifier
+            ("packetId") in packet headers. The "<literal>hash</literal>" and
+            "<literal>ihash</literal>" commands are mutually exclusive and
+            their use supercedes any prior hashing configuration. If I-DPD is
+            disabled and no hash algorithm is specfiied, no duplicate packet
+            detection occurs. (default = "NONE")</entry>
           </row>
 
           <row>
@@ -305,22 +361,23 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             <entry>This command is similar to the "<literal>hash</literal>"
             command described above in that a hashing
             &lt;<literal>algorithm</literal>&gt; type is specified for
-            <emphasis>nrlsmf</emphasis> use. However, H-DPD operation is not
-            invoked as a result of this command. Instead, the specified hash
-            algorithm is used to calculate an "internal hash" value that is
-            concatenated with the explicit I-DPD identifier for duplicate
+            <application>nrlsmf</application> use. However, H-DPD operation is
+            not invoked as a result of this command. Instead, the specified
+            hash algorithm is used to calculate an "internal hash" value that
+            is concatenated with the explicit I-DPD identifier for duplicate
             packet detection. This mode of operation enhances I-DPD operation,
             making it less vulnerable to denial-of-service attacks against SMF
             where spoofed packets with misleading packet identifiers may be
             generated by bad-behaving nodes. Note that
-            <emphasis>nrlsmf</emphasis> "<literal>ihash</literal>" behavior
-            when I-DPD is disabled (i.e., "<literal>idpd off</literal>") is
-            undefined but will generally result in essentially H-DPD operation
-            for forwarded flows. The "<literal>hash</literal>" and
-            "<literal>ihash</literal>" commands are mutually exclusive and
-            their use supercedes any prior hashing configuration. If I-DPD is
-            disabled and no hash algorithm is specfiied, no duplicate packet
-            detection occurs. (default = "NONE")</entry>
+            <application>nrlsmf</application> "<literal>ihash</literal>"
+            behavior when I-DPD is disabled (i.e., "<literal>idpd
+            off</literal>") is undefined but will generally result in
+            essentially H-DPD operation for forwarded flows. The
+            "<literal>hash</literal>" and "<literal>ihash</literal>" commands
+            are mutually exclusive and their use supercedes any prior hashing
+            configuration. If I-DPD is disabled and no hash algorithm is
+            specfiied, no duplicate packet detection occurs. (default =
+            "NONE")</entry>
           </row>
 
           <row>
@@ -328,26 +385,43 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
 
             <entry>When enabled ("on"), the ID-based Duplicate Packet
             Detection (I-DPD per the SMF specification) is performed. Note
-            that <emphasis>nrlsmf</emphasis> allows a hybrid of I-DPD and
-            H-DPD to be used for packet identification via the
+            that <application>nrlsmf</application> allows a hybrid of I-DPD
+            and H-DPD to be used for packet identification via the
             "<literal>ihash</literal>" command. If I-DPD is disabled and no
             hash algorithm is specfiied, no duplicate packet detection occurs.
             (default = "on")</entry>
           </row>
 
           <row>
+            <entry><literal>filterDups {on | off}</literal></entry>
+
+            <entry>When enabled ("on") duplicate packets received on
+            <application>nrlsmf</application> <command>device</command>
+            virtual interfaces are not written up to the kernel IP stack. This
+            prevents local applications from receiving unnecessary duplicate
+            packets. Note that this only applies to interfaces created with
+            the <application>nrlsmf</application> <command>device</command>
+            command where the <application>nrlsmf</application> interface I/O
+            handling is "in path" and can block transfer of received packets
+            unlike regular "pcap" I/O operation where
+            <application>nrlsmf</application> is just seeing a copy of packets
+            that are also provided to the kernel IP stack for receive
+            processing. (default = "on")</entry>
+          </row>
+
+          <row>
             <entry><constant>window {on | off}</constant></entry>
 
-            <entry>When enabled ("on"), <emphasis>nrlsmf</emphasis> will use a
-            windowed, sequence-number approach for duplicate packet detection.
-            When disabled, <emphasis>nrlsmf</emphasis> uses a table-based
-            approach that only requires unique packet identification without
-            any requirement of ordered, sequenced packet identifiers. When
-            "<literal>hash</literal>" mode is enabled,
-            <emphasis>nrlsmf</emphasis> always uses the table-based approach
-            to duplicate packet detection regardless of the
-            "<literal>window</literal>" setting. Also when window is enabled,
-            the <literal>hash</literal> type is automatically set to
+            <entry>When enabled ("on"), <application>nrlsmf</application> will
+            use a windowed, sequence-number approach for duplicate packet
+            detection. When disabled, <application>nrlsmf</application> uses a
+            table-based approach that only requires unique packet
+            identification without any requirement of ordered, sequenced
+            packet identifiers. When "<literal>hash</literal>" mode is
+            enabled, <application>nrlsmf</application> always uses the
+            table-based approach to duplicate packet detection regardless of
+            the "<literal>window</literal>" setting. Also when window is
+            enabled, the <literal>hash</literal> type is automatically set to
             "<literal>NONE</literal>" and <literal>idpd</literal> operation is
             enabled. (default = "off")</entry>
           </row>
@@ -402,7 +476,8 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             the IP stack and any such configured IP policies or rules. When
             used, the "<literal>firewallForward</literal>" command
             <emphasis>MUST</emphasis> precede any "Interface" or "Gateway"
-            commands on the command-line. (default = "off")</entry>
+            commands on the command-line. (default = "off")
+            [<emphasis>DEPRECATED</emphasis>]</entry>
           </row>
 
           <row>
@@ -415,72 +490,70 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             packets has occurred due to MTU limits. The default mechanism of
             capturing raw MAC layer frames will not properly forward any IP
             packets that have been fragmented in the current
-            <emphasis>nrlsmf</emphasis> implementation. When used, the
+            <application>nrlsmf</application> implementation. When used, the
             "<literal> firewall</literal>Capture" command
             <emphasis>MUST</emphasis> precede any "Interface" or "Gateway"
-            commands on the command-line.(default = "off")</entry>
+            commands on the command-line.(default = "off")
+            [<emphasis>DEPRECATED</emphasis>]</entry>
           </row>
 
           <row>
             <entry><literal>tap &lt;tapInstanceName&gt;</literal></entry>
 
-            <entry>This command instructs <emphasis>nrlsmf</emphasis> to pass
-            packets that would be forwarded to an external process instead of
-            forwarding them. Note, however, that the external process may use
-            the interprocess <literal>"smfPkt"</literal> command to return
-            these packets back to the nrlsmf process for actual forwarding.
-            The external process can use the "<literal>smfPkt</literal>"
-            command and its format to send interprocess messages with packet
-            content to <emphasis>nrlsmf</emphasis> instances identified by
-            their &lt;<literal>instanceName</literal>&gt;. See the
-            "<literal><link linkend="smfPkt">smfPkt</link></literal>" command
-            description for further information. This allows an external
-            process to "tap" into the SMF forwarding plane and perform
-            additional, custom filtering of forwarded packet flows. A simple,
-            pass-through example application is included in the
-            <emphasis>nrlsmf</emphasis> source code distribution in the file
-            "tapExample.cpp".</entry>
+            <entry>This command instructs <application>nrlsmf</application> to
+            pass packets that would be forwarded to an external process
+            instead of forwarding them. Note, however, that the external
+            process may use the interprocess <literal>"smfPkt"</literal>
+            command to return these packets back to the nrlsmf process for
+            actual forwarding. The external process can use the
+            "<literal>smfPkt</literal>" command and its format to send
+            interprocess messages with packet content to
+            <application>nrlsmf</application> instances identified by their
+            &lt;<literal>instanceName</literal>&gt;. See the "<literal><link
+            linkend="smfPkt">smfPkt</link></literal>" command description for
+            further information. This allows an external process to "tap" into
+            the SMF forwarding plane and perform additional, custom filtering
+            of forwarded packet flows. A simple, pass-through example
+            application is included in the <application>nrlsmf</application>
+            source code distribution in the file "tapExample.cpp".</entry>
           </row>
 
           <row>
             <entry><literal id="cmd_instance">instance
             &lt;instanceName&gt;</literal></entry>
 
-            <entry>Assigns a name to the running <emphasis>nrlsmf</emphasis>
-            process. This name is used to name the ProtoPipe(MESSAGE)
-            mechanism (Unix-domain socket on Unix, mailslot on Win32,
-            registry-entered host-local UDP socket on WinCE) for interprocess
-            communication that is monitored for "remote control" commands
-            (including most of the command-line options listed in this table).
-            (default = "nrlsmf")</entry>
+            <entry>Assigns a name to the running
+            <application>nrlsmf</application> process. This name is used to
+            name the ProtoPipe(MESSAGE) mechanism (Unix-domain socket on Unix,
+            mailslot on Win32, registry-entered host-local UDP socket on
+            WinCE) for interprocess communication that is monitored for
+            "remote control" commands (including most of the command-line
+            options listed in this table). (default = "nrlsmf")</entry>
           </row>
 
           <row>
             <entry><literal>smfServer &lt;processName&gt;</literal></entry>
 
             <entry>Specify a compatible, external process that
-            <emphasis>nrlsmf</emphasis> will inform of its status.
-            (<emphasis>nrlsmf</emphasis> will signal that process with a
-            "<literal>smfClient &lt;instanceName&gt;</literal>" message via
-            interprocess communication). It is expected that such an external
-            process may wish to have dynamic control of
-            <emphasis>nrlsmf</emphasis>. This signaling allows the
-            <emphasis>nrlsmf</emphasis> and external processes to be started
-            independently in any order. (default external process name =
-            "nrlolsr")</entry>
+            <application>nrlsmf</application> will inform of its status.
+            (<application>nrlsmf</application> will signal that process with a
+            "<literal>smfClientStart &lt;instanceName&gt;</literal>" message
+            via interprocess communication). It is expected that such an
+            external process may wish to have dynamic control of
+            <application>nrlsmf</application>. This signaling allows the
+            <application>nrlsmf</application> and external processes to be
+            started independently in any order. (default external process name
+            = "nrlolsr")</entry>
           </row>
 
           <row>
-            <entry><literal>unicast {unicastPrefix | off}</literal></entry>
+            <entry><literal>unicast &lt;ifaceGroupName&gt;</literal></entry>
 
-            <entry>Specify an IP prefix of unicast packets that will be
-            intercepted by <emphasis>nrlsmf</emphasis>. These packets are
-            captured through an <emphasis>iptables</emphasis> rule and follow
-            the regular processing path of multicast packets, including DPD
-            checks, and ECDS. This command assumes that the unicast packets
-            will be processed by a separate process that interacts with
-            <emphasize>nrlsmf</emphasize> through the
-            <emphasize>tap</emphasize> mechanism.</entry>
+            <entry>Enables unicast flooding or "Elastic Unicast" routing
+            operation for interface groups configured with the
+            <option>elastic</option> option. "Elastic Unicast" routing is
+            somewhat like an On-Demand Distance Vector MANET routing
+            protocol.</entry>
           </row>
 
           <row>
@@ -488,15 +561,15 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             &lt;dscpValue&gt;,&lt;dscpValueList&gt;</literal></entry>
 
             <entry>Specify a list of DSCP values for unicast packets that will
-            be intercepted by <emphasis>nrlsmf</emphasis>. This command
-            assumes that a <emphasize>unicast</emphasize> command is also
-            being used.</entry>
+            be intercepted by <application>nrlsmf</application>. This command
+            assumes that a <command>unicast</command> command is also being
+            used. [<emphasis>DEPRECATED</emphasis>]</entry>
           </row>
 
           <row>
             <entry><literal>debug &lt;debugLevel&gt;</literal></entry>
 
-            <entry>Sets the <emphasis>nrlsmf</emphasis> debug level. The
+            <entry>Sets the <application>nrlsmf</application> debug level. The
             higher the &lt;debugLevel&gt; value, the more verbose the debug
             output. (default = 0)</entry>
           </row>
@@ -504,34 +577,47 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
           <row>
             <entry><literal>log &lt;logFile&gt;</literal></entry>
 
-            <entry>Redirects <emphasis>nrlsmf</emphasis> debug output to a
-            file instead of <literal>stderr</literal>.</entry>
+            <entry>Redirects <application>nrlsmf</application> debug output to
+            a file instead of <literal>stderr</literal>.</entry>
           </row>
 
           <row>
             <entry><literal>boost {on | off}</literal></entry>
 
             <entry>Enables/disables "priority boost" (process priority) for
-            the <emphasis>nrlsmf</emphasis> process. It may be useful to
+            the <application>nrlsmf</application> process. It may be useful to
             disable "priority boost" for debugging purposes. (default =
             '<literal>on</literal>')</entry>
+          </row>
+
+          <row>
+            <entry><literal>with-frr</literal></entry>
+
+            <entry>Enables <application>nrlsmf</application> to run along FRR
+            and pull configuration where appropriate, such as VRF info</entry>
+          </row>
+
+          <row>
+            <entry><literal>vrf
+            &lt;vrf-name&gt;,[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</literal></entry>
+
+            <entry>Associate list of interfaces with a VRF.</entry>
           </row>
         </tbody>
       </tgroup>
     </table>
 
-    <para>The "MANET Interface Commands" apply to configuring specific,
-    usually wireless, interfaces for MANET SMF operation. As such, packets
-    inbound on such "MANET" interfaces may also be forwarded by
-    <emphasis>nrlsmf</emphasis> back out the same interface as well as
-    possibly other interfaces if so configured. The
-    "<literal>resequence</literal>" command listed here should be used to
-    ensure that packets generated are properly labeled using the IPv4 ID field
-    or the IPv6 SMF_DPD header option for SMF duplicate packet
+    <para>The "Interface Commands" apply to configuring specific, usually
+    wireless, interfaces for SMF operation. As such, packets inbound on such
+    interfaces may also be forwarded by <application>nrlsmf</application> back
+    out the same interface as well as possibly other interfaces if so
+    configured. The "<literal>resequence</literal>" command listed here should
+    be used to ensure that packets generated are properly labeled using the
+    IPv4 ID field or the IPv6 SMF_DPD header option for SMF duplicate packet
     detection.</para>
 
     <table>
-      <title>MANET Interface Commands</title>
+      <title>Interface (and Interface Group) Commands</title>
 
       <tgroup cols="2">
         <colspec colname="Command" colwidth="1*"/>
@@ -541,32 +627,64 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
         <tbody>
           <row>
             <entry><literal>add
-            [&lt;group&gt;,]{cf|smpr|ecds|...},&lt;ifaceList&gt;</literal></entry>
+            [&lt;ifaceGroup&gt;,]{cf|smpr|ecds|...},&lt;ifaceList&gt;</literal></entry>
 
             <entry>Creates a new interface group or adds interfaces to an
-            existing group and configures the group for a specific relay
-            algorithm (e.g., <literal>cf</literal>, <literal>smpr</literal>,
-            <literal>ecds</literal>) or a "<literal>push</literal>",
-            "<literal>rpush</literal>", "<literal>merge</literal>", or
-            "<literal>rmerge</literal>" gateway interface group can also be
-            managed instead of an SMF relay algorithm. Note if the
-            <literal>&lt;group&gt;</literal> name is omitted, an implicit
+            existing one and configures the interface group for a specific
+            relay algorithm (e.g., <literal>cf</literal>,
+            <literal>smpr</literal>, <literal>ecds</literal>). Also, a
+            "<literal><command>push</command></literal>",
+            "<literal><command>rpush</command></literal>",
+            "<literal><command>merge</command></literal>", or
+            "<literal><command>rmerge</command></literal>" gateway interface
+            group can also be configured with the '<command>add</command>'
+            command instead of an SMF relay algorithm. Note if the
+            <literal>&lt;ifaceGroup&gt;</literal> name is omitted, an implicit
             group name based on the relay algorithm or given gateway command
-            is used.</entry>
+            (.e.g, 'cf', 'ecds', 'push', etc) is assumed. An "interface group"
+            corresponds to a set of interfaces that are treated as a common
+            flooding or Elastic Multicast routing domain. (Note that
+            <application>nrlsmf</application> is currently limited to a single
+            "elastic" interface group but will allow for multiple, separate
+            "elastic" groups in the future.</entry>
           </row>
 
           <row>
-            <entry><literal>remove {&lt;group&gt; |
-            [&lt;group&gt;,],&lt;ifaceList}</literal></entry>
+            <entry><literal>remove
+            &lt;ifaceGroup&gt;,[&lt;iface1&gt;[,&lt;iface2&gt;,...]]</literal></entry>
 
-            <entry>Removes either an entire <literal>&lt;group&gt;</literal>
-            or the given <literal>&lt;ifaceList&gt;</literal> interfaces from
-            a specific <literal>&lt;group&gt;</literal> or from all groups if
-            the <literal>&lt;group&gt;</literal> name is omitted. The
+            <entry>Removes either an entire
+            <literal>&lt;ifaceGroup&gt;</literal> or the given
+            <literal>&lt;ifaceList&gt;</literal> interfaces from a specific
+            <literal>&lt;group&gt;</literal> or from all groups if the
+            <literal>&lt;group&gt;</literal> name is omitted. The
             <literal>&lt;group&gt;</literal> name should be that of an
             explicit group name previous created with the
             <command>add</command> command or the implicit relay algorithm or
             gateway mode.</entry>
+          </row>
+
+          <row>
+            <entry><literal>layered &lt;ifaceName&gt;</literal></entry>
+
+            <entry>This per-interface attribute marks the given
+            &lt;<parameter>ifaceName</parameter>&gt; as an interface that is
+            associated (layered) with a subnetwork that provides its own
+            organic multi-hop, multicast distribution as opposed to simple
+            wireless interfaces (e.g. WiFi) that don't provide underlying
+            multi-hop, multicast distribution. The effect of this attribute is
+            that is a given packet is received upon such an interface, the
+            duplicate packet detection table for that interface is updated so
+            that same packet will not be forwarded out that interface since
+            <application>nrlsmf</application> can assume (via the layered
+            attribute) that the packet has already been fully distributed on
+            that subnetwork as needed. This avoids "packet storms" where both
+            an <application>nrlsmf</application> "overlay" and the underlay
+            subnetwork would be duplicatively (or more) flooding/forwarding
+            multicast packets over possibly multiple hops. This same attribute
+            can also be applied to point-to-point interfaces or tunnel
+            interfaces where forwarding a packet out the same interface upon
+            which it was received has no (or negative) benefit.</entry>
           </row>
 
           <row>
@@ -577,7 +695,9 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             received on a given interface may be forwarded out the same
             interface as well as on other listed interfaces. The
             &lt;<literal>ifaceList</literal>&gt; is a comma-delimited (no
-            spaces) list of interface names.</entry>
+            spaces) list of interface names. This command is supported for
+            backwards compatibility and its use is equivalent to using the add
+            command to create an interface group names 'cf'. I.e.,:</entry>
           </row>
 
           <row>
@@ -605,11 +725,48 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
           <row>
             <entry><literal>relay {on | off}</literal></entry>
 
-            <entry>This command controls the <emphasis>nrlsmf</emphasis>
+            <entry>This command controls the <application>nrlsmf</application>
             status as a relay for interfaces that have E-CDS forwarding
             enabled. Note that S-MPR relay status is controlled by the
-            selector MAC address list supplied to <emphasis>nrlsmf</emphasis>
-            during run-time. (default = "off")</entry>
+            selector MAC address list supplied to
+            <application>nrlsmf</application> during run-time. (default =
+            "off"). In the future, this command will be updated to apply to
+            specific interface group(s). At the moment, it applies to all
+            interface groups.</entry>
+          </row>
+
+          <row>
+            <entry><literal>allow [vrf,&lt;srcVRF&gt;,&lt;dstVRF&gt;,]{all |
+            &lt;addr1&gt;[,&lt;addr2&gt;,...]}</literal></entry>
+
+            <entry>Sets a forwarding policy to allow either specific Virtual
+            Routing and Forwarding (VRF) groups with specific destination
+            addresses or globally allow specific addresses to be
+            flooded/routed by <application>nrlsmf</application>. Non-matching
+            addresses will be ignored by forwarding within the VRF group (if
+            '<option>vrf</option>' is specified) or globally. An address
+            keyword of '<option>all</option>' can be used to wildcard (i.e.,
+            "allow all") . The complementary <command>deny</command> command
+            provides a way to edit the overall policy to exclude specific
+            addresses. The <command>allow</command> and
+            <command>deny</command> commands can be used in combination to
+            control the overall policy.</entry>
+          </row>
+
+          <row>
+            <entry><literal>deny [vrf,&lt;srcVRF&gt;,&lt;dstVRF&gt;,]{all |
+            &lt;addr1&gt;[,&lt;addr2&gt;,...]}</literal></entry>
+
+            <entry>Sets a forwarding policy to deny (block) destinations from
+            forwarding within either specific Virtual Routing and Forwarding
+            (VRF) groups or globally. Matching addresses will be ignored by
+            forwarding within the VRF group (if '<option>vrf</option>' is
+            specified) or globally. An address keyword of
+            '<option>all</option>' can be used to wildcard (i.e., "deny all")
+            . The complementary <command>allow</command> command provides a
+            way to edit the overall policy to exclude specific addresses. The
+            <command>allow</command> and <command>deny</command> commands can
+            be used in combination to control the overall policy.</entry>
           </row>
 
           <row>
@@ -617,36 +774,290 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
             &lt;vifName&gt;,&lt;ifaceName&gt;[,&lt;addrList
             ...&gt;]</literal></entry>
 
-            <entry>This command ...</entry>
+            <entry>This command instantiations a tun/tap virtual interface
+            named &lt;<parameter>vifName</parameter>&gt; that is associated
+            with the underlay physical interface identified by
+            &lt;<parameter>interfaceName</parameter>&gt;. If the optional
+            &lt;<parameter>addrList</parameter>&gt; is omitted, the default
+            behavior is that addresses and routes assigned to
+            &lt;<parameter>ifaceName</parameter>&gt; will be "harvested" and
+            reassigned to the new &lt;<parameter>vifName</parameter>&gt;
+            interface. Those addresses and routes are restored to the
+            &lt;<parameter>ifaceName</parameter>&gt; interface when
+            <command>nrlsmf</command> shuts down.</entry>
+          </row>
+
+          <row>
+            <entry><literal>cid &lt;vifName&gt;,&lt;iface1&gt;[/{t|r|d}][,
+            &lt;iface2&gt;[/{t|r|d}][,&lt;iface3&gt;[/{t|r|d}],...]]
+            </literal></entry>
+
+            <entry>The Composite Interface Device (<command>cid</command>)
+            command can be used to add (or reconfigure) physical interface
+            devices to an existing 'parent' virtual interface created by the
+            <application>nrlsmf</application> <command>device</command>
+            command. The listed interfaces act as "subchannels" to the parent
+            interface. Packets received on receive-enabled ('r' flag)
+            interfaces are passed up to the kernel IP stack via the
+            &lt;vifName&gt; tap device. Packets transmitted to the
+            &lt;vifName&gt; interface are currently "mirrored" (i.e.,
+            replicated) across transmit-enabled ('t' flag) sub-interfaces. The
+            code base also supports round-robin distribution ( but not
+            currently exposed) and other experimental strategies (e.g.,
+            network coding) may be added in the future. The optional
+            '<option>t</option>', '<option>r</option>', and
+            '<option>d</option>' flags are available to designate
+            sub-interfaces as transmit-only, receive-only, or be deleted
+            (i.e., removed) respectively. If these flags are omitted, the
+            default sub-interface behavior is to be used both for transmission
+            nd reception. This feature is primarily to support research and
+            development activities where bonding of different (nominally
+            wireless) interfaces can be useful for different multi-channel
+            concepts. Note the given &lt;<parameter>vifName</parameter>&gt;
+            MUST be an <application>nrlsmf</application>
+            <command>device</command> that has already been created.</entry>
           </row>
 
           <row>
             <entry><literal>rate
             [&lt;ifaceName&gt;,]&lt;bits/sec&gt;</literal></entry>
 
-            <entry>This command ...</entry>
+            <entry>This command sets a maximum transmission rate limit for the
+            interface identified by &lt;<parameter>ifaceName</parameter>&gt;.
+            The default behavior is unlimited rate. Note a
+            &lt;<parameter>bits/sec</parameter>&gt; value of -1.0 can be used
+            to indicate unlimited rate.</entry>
           </row>
 
           <row>
             <entry><literal>queue
             [&lt;ifaceName&gt;,]&lt;queueLimit&gt;</literal></entry>
 
-            <entry>This command ...</entry>
+            <entry>This command enables an <application>nrlsmf</application>
+            layer of queuing in addition to whatever queuing (e.g., Linux
+            '<command>tc</command>' traffic control) is enabled on the
+            underlying physical interface. Note that
+            &lt;<parameter>ifaceName</parameter>&gt; may correspond to a
+            virtual interface created by the device command or other physical
+            interface that has been assigned to an
+            <application>nrlsmf</application> interface group. The intent of
+            this option was to allow for experimental queuing and flow control
+            mechanisms in conjunction with routing and forwarding but is
+            limited by minimum interface queue depths and operation with the
+            current use of AF_PACKET interfaces for pacekt I/O. Future updates
+            to <application>nrlsmf</application> may utilize AF_XDP or
+            PACKET_TX_RING on Linux to address that limitation. The
+            &lt;<parameter>queueLimit</parameter>&gt; parameter indicates the
+            number of packets the queue will buffer and a simple "drop tail"
+            queuing discipline is observed.</entry>
+          </row>
+
+          <row>
+            <entry><literal>ujoin &lt;groupAddr&gt;,&lt;ifaceName&gt;
+            </literal></entry>
+
+            <entry>This is for use with mGRE point-to-multipoint tunnel
+            interfaces where IP multicast encapsulation is used on the
+            underlay network. The <command>ujoin</command> (underlay join)
+            command causes <application>nrlsmf</application> to join the
+            designated IP multicast <parameter>&lt;groupAddr&gt;</parameter>
+            on the given <parameter>&lt;ifaceName&gt;</parameter>. This is
+            generally needed for GRE decapsulation to successfully work with
+            mGRE operation. This command supports administrative management of
+            those necessary memberships. Future
+            <application>nrlsmf</application> Elastic Multcast operation may
+            support dynamic underlay group membership depending on the overlay
+            multicast -&gt; underlay multicast mapping scheme used. Meanwhile
+            this command can be used as part of static configuration or
+            dynamically at runtime by a controller as needed.</entry>
+          </row>
+
+          <row>
+            <entry><literal>uleave &lt;groupAddr&gt;,&lt;ifaceName&gt;
+            </literal></entry>
+
+            <entry>This is the complement of the <command>ujoin</command>
+            command and is used to leave underlay group memberships as
+            needed.</entry>
+          </row>
+        </tbody>
+      </tgroup>
+    </table>
+
+    <para>The "Elastic Multicast Commands" are the set of commands that apply
+    only to Elastic Multicast protocol operation supported by
+    <application>nrlsmf</application>. Currently, Elastic Multicast operation
+    is limited to a single <application>nrlsmf</application> Interface Group.
+    In the future, separate Multicast Forwarding Information Bases (aka Mcast
+    FIBs) will be supported on a per Interface Group basis. The
+    <application>nrlsmf</application> code update plan includes ongoing
+    separation of control plane functions (protocol signaling, configuration)
+    and forwarding/data plane functions (packet reception/transmission,
+    duplicate packet detection, flow detection and timeout) to streamline the
+    code and its performance. Some aspects of Elastic Multicast design are
+    still in progress informed by limited deployment and experimentation
+    activities.</para>
+
+    <table>
+      <title>Elastic Multicast Commands</title>
+
+      <tgroup cols="2">
+        <colspec colname="Command" colwidth="1*"/>
+
+        <colspec colname="Description" colwidth="2.5*"/>
+
+        <tbody>
+          <row>
+            <entry><literal>elastic &lt;ifaceGroup&gt;</literal></entry>
+
+            <entry>Enables Elastic Multicast routing instead of basic SMF
+            flooding for the given &lt;<parameter>ifaceGroup</parameter>&gt;.
+            IMPORTANT - note that <command>nrlsmf</command> is currently
+            limited to providing proper Elastic Multicast routing on a single
+            interface group. Future update will enable multiple, different
+            interface groups to conduct independent Elastic Multicast routing.
+            Thus, "interface groups" will act much like Virtual Routing and
+            Forwarding (VRF) groups. Note that for basic SMF flooding,
+            different interface groups can conduct forwarding independent of
+            one another.</entry>
+          </row>
+
+          <row>
+            <entry><literal>advertise</literal></entry>
+
+            <entry>Set Elastic Multicast operation to use Elastic Multicast
+            Advertisement (EM_ADV) messages to inform other network relays of
+            active flows instead of the default token bucket limited
+            forwarding of user data packets. However, note that upon initial
+            detection of a flow, the first token bucket depth count of user
+            data packets are forwarded/flooded per SMF to allow limited data
+            transfer while initial EM_ADV propagation and any Elastic
+            Multicast Acknowledgment (EM_ACK) messaging occurs to build the
+            distribution tree/mesh without loss of user traffic. This also
+            allows support of very low duty cycle multicast flows that would
+            otherwise be penalized by initial forwarding tree/mesh formation.
+            In the future the Elastic Multicast "<option>advertise</option>"
+            attribute will be controllable on a per interface group
+            basis.</entry>
+          </row>
+
+          <row>
+            <entry><literal>etx &lt;ifaceName&gt;</literal></entry>
+
+            <entry>Enable use of a path quality metric similar to Estimated
+            Transmission Cost (ETX) on the interface specified by
+            &lt;<parameter>ifaceName</parameter>&gt;. This is only useful when
+            the elastic command is used to enable Elastic Multicast routing.
+            If ETX is not available, Elastic Multicast routing uses a hop
+            count metric by default. To support link quality measurement to
+            inform the metric, a modified version of the IP_UMP (Upstream
+            Multicast Packet) header extension is used. The modification
+            includes setting a 16-bit sequence number in the reserved portion
+            of that header extension that is used to measure per-hop packet
+            loss on all packets forwarded. The ETX-like metric is accumulated
+            along the forwarding path using this information and "downstream"
+            relays pick the best "upstream" relays to acknowledge (using
+            EM_ACK messages) to activate the best quality forwarding paths.
+            The per-hop 'cost' of a hop with no packet loss is one with lossy
+            hops adding additional 'cost' to build the additive path metric.
+            Thus non-ETC interfaces are assumed lossless with a one-hop cost
+            of one and mix of ETX and non-ETX interfaces can be used. Elastic
+            Multicast will be extended with additional metric options in the
+            future.</entry>
+          </row>
+
+          <row>
+            <entry><literal>flow
+            &lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]&lt;dstAddr&gt;[/&lt;maskLen&gt;]
+            [,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
+
+            <entry>Administratively emplace a flow description that will be
+            proactively advertised when Elastic Multicast advertise mode is
+            enabled. Note a local interface name can be used in place of the
+            <parameter>&lt;srcAddr&gt;</parameter> parameter and the IP
+            address for the given interface will be used as the source
+            interface in the advertisement. This enables
+            <application>nrlsmf</application> to proactively build multicast
+            trees independent of user data transmission. One experimental use
+            case being pursued includes using this capability to build trees
+            for use by hop-by-hop content distribution mechanisms. The
+            <application>nrlsmf</application> code base has a notification
+            function when previous and/or next hop information changes for a
+            flow and the source-&gt;group information can be used to match the
+            appropriate prev/next hops for content distribution. Other use
+            cases can include configuration of preset flows for a prior known
+            user data transmissions, including low duty cycle flows.
+            Zero-value <parameter>&lt;maskLen&gt;</parameter> fields will
+            wildcard addressing. An IP <parameter>&lt;protocol&gt;</parameter>
+            value of 255 will wildcard that aspect of the flow description and
+            a zero-value <parameter>&lt;class&gt;</parameter> does the same
+            for its aspect.</entry>
+          </row>
+
+          <row>
+            <entry><literal>join
+            &lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]&lt;dstAddr&gt;[/&lt;maskLen&gt;]
+            [,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
+
+            <entry>Administratively "join" a flow description that will prompt
+            Elastic Multicast routing to acknowledge (via EM_ACK) matching
+            upstream flows. Nominally, this can simply be an IP multicast
+            <parameter>&lt;dstAddr&gt; </parameter>group or a more specific
+            (or less specific with the <parameter>&lt;maskLen&gt;</parameter>
+            option) flow classifier, even including unicast if
+            <application>nrlsmf</application> <command>unicast</command>
+            operation is enabled. The same field specifications apply as for
+            the <command>flow</command> command.</entry>
+          </row>
+
+          <row>
+            <entry><literal>leave
+            &lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]&lt;dstAddr&gt;[/&lt;maskLen&gt;]
+            [,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
+
+            <entry>Administratively "leave" a flow previously set with the
+            <command>join</command> command. This will cancel acknowledgment
+            of matching flows for Elastic Multicast operation.</entry>
+          </row>
+
+          <row>
+            <entry><literal>map
+            &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+
+            <entry>Maps tunnel endpoint address information for a GRE
+            interface (or other ancillary iface-&gt;address associations).
+            This enables Elastic Multicast operation to properly match inbound
+            EM_ACK messages to the interface upon which the corresponding
+            EM_ADV or forwarded packet was transmitted. Typically, this
+            command is not needed when <command>nrlsmf</command> is able to
+            automatically retrieve the tunnel endpoint information when a
+            tunnel interface is added to an interface group. However, some
+            tunnel configurations (e.g. mGRE) may require this "helper"
+            function as part of <command>nrlsmf</command> setup.</entry>
+          </row>
+
+          <row>
+            <entry><literal>unmap
+            &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+
+            <entry>Deletes matching tunnel endpoint or interface-&gt;address
+            associations previously set up with the <command>map</command>
+            command.</entry>
           </row>
         </tbody>
       </tgroup>
     </table>
 
     <para>The "Gateway Commands" apply to configuring
-    <emphasis>nrlsmf</emphasis> to support a forced relay of packets to/from
-    MANET/non-MANET interfaces. This can allow creation of gateways from
-    infrastructure IP networks (e.g., the Internet) with IP Multicast routing
-    support to dynamic MANET areas that rely upon SMF for group data
+    <application>nrlsmf</application> to support a forced relay of packets
+    to/from MANET/non-MANET interfaces. This can allow creation of gateways
+    from infrastructure IP networks (e.g., the Internet) with IP Multicast
+    routing support to dynamic MANET areas that rely upon SMF for group data
     distribution. The commands provided here are designed to have a great deal
     of flexibility, so some care must be taken to avoid loops with the modes
     (i.e., "<literal>rpush</literal>" or "<literal>rmerge</literal>" commands)
     that "resequence" (or tag) packet flows for duplicate packet detection.
-    The <emphasis>nrlsmf</emphasis> application has some logic in its
+    The <application>nrlsmf</application> application has some logic in its
     command-parsing to avoid some of these scenarios, but the flexibility
     allowed permits some configurations that may produce undesirable
     effects.</para>
@@ -732,16 +1143,16 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
     linkend="RemoteControl">Remote Control Interface</link>). The principal
     reason these commands are available only via inter-process communication
     is that the commands have a partially binary format to convey lists of MAC
-    addresses to control aspects of <emphasis>nrlsmf</emphasis> operation. In
-    each of these commands, an ASCII prefix is given to indicate the command
-    type, followed by an ASCII "space" character, and then the binary list of
-    concatenated 6-byte Ethertype MAC addresses (in Big Endian order). The
-    length of the datagram command sent to <emphasis>nrlsmf</emphasis> implies
-    the length of the MAC address list. The "selectorMac" and "neighborMac"
-    apply to control of S-MPR forwarding. The "mneBlockMac" command is
-    provided to support proper SMF behavior in the <ulink
-    url="http://cs.itd.nrl.navy.mil/products">NRL Mobile Network Emulation
-    (MNE)</ulink> environment.</para>
+    addresses to control aspects of <application>nrlsmf</application>
+    operation. In each of these commands, an ASCII prefix is given to indicate
+    the command type, followed by an ASCII "space" character, and then the
+    binary list of concatenated 6-byte Ethertype MAC addresses (in Big Endian
+    order). The length of the datagram command sent to
+    <application>nrlsmf</application> implies the length of the MAC address
+    list. The "selectorMac" and "neighborMac" apply to control of S-MPR
+    forwarding. The "mneBlockMac" command is provided to support proper SMF
+    behavior in the <ulink url="http://cs.itd.nrl.navy.mil/products">NRL
+    Mobile Network Emulation (MNE)</ulink> environment.</para>
 
     <para><table>
         <title>Remote-only Commands</title>
@@ -757,15 +1168,16 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
               macAddrArray&gt;</literal></entry>
 
               <entry>This command can be used by external processes (e.g.,
-              <emphasis>nrlolsrd</emphasis>) to control
-              <emphasis>nrlsmf</emphasis> S-MPR forwarding. This command sets
-              the list of MAC addresses that have selected the local
-              <emphasis>nrlsmf</emphasis> node as a Multi-Point Relay (MPR).
-              The format of the <literal>&lt;binary macAddrArray&gt;</literal>
-              is a list of 6-byte Ether-type MAC addresses. Thus, the length
-              of this "array" is a multiple of 6 bytes. An ASCII "space"
-              character delimits the literal "<literal>selectorMac</literal>"
-              command string from the binary array of MAC addresses.</entry>
+              <application>nrlolsrd</application>) to control
+              <application>nrlsmf</application> S-MPR forwarding. This command
+              sets the list of MAC addresses that have selected the local
+              <application>nrlsmf</application> node as a Multi-Point Relay
+              (MPR). The format of the <literal>&lt;binary
+              macAddrArray&gt;</literal> is a list of 6-byte Ether-type MAC
+              addresses. Thus, the length of this "array" is a multiple of 6
+              bytes. An ASCII "space" character delimits the literal
+              "<literal>selectorMac</literal>" command string from the binary
+              array of MAC addresses.</entry>
             </row>
 
             <row>
@@ -773,11 +1185,11 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
               macAddrArray&gt;</literal></entry>
 
               <entry>This command can be used by external processes (e.g.,
-              <emphasis>nrlolsrd</emphasis>) to control
-              <emphasis>nrlsmf</emphasis> S-MPR forwarding. This command sets
-              the list of MAC addresses that have been identified as
+              <application>nrlolsrd</application>) to control
+              <application>nrlsmf</application> S-MPR forwarding. This command
+              sets the list of MAC addresses that have been identified as
               symmetric, 1-hop neighbors of the local
-              <emphasis>nrlsmf</emphasis> node. The format of the
+              <application>nrlsmf</application> node. The format of the
               <literal>&lt;binary macAddrArray&gt;</literal> is a list of
               6-byte Ether-type MAC addresses. Thus, the length of this
               "array" is a multiple of 6 bytes. An ASCII "space" character
@@ -789,16 +1201,16 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
               <entry><literal>mneBlockMac &lt;binary
               macAddrArray&gt;</literal></entry>
 
-              <entry>This command enables the <emphasis>nrlsmf</emphasis>
-              process to be compatible with the NRL Mobile Network Emulator
-              (MNE) system that uses MAC-based blocking to emulate the
-              connectivity of mobile network topologies. The command sets the
-              list of addresses that should be blocked (i.e., are not
-              reachable as 1-hop neighbors) of the local
-              <emphasis>nrlsmf</emphasis> node. The NRL MNE processes use this
-              command as needed. This command is only available when
-              <emphasis>nrlsmf</emphasis> is compiled with the MNE_SUPPORT
-              macro enabled.</entry>
+              <entry>This command enables the
+              <application>nrlsmf</application> process to be compatible with
+              the NRL Mobile Network Emulator (MNE) system that uses MAC-based
+              blocking to emulate the connectivity of mobile network
+              topologies. The command sets the list of addresses that should
+              be blocked (i.e., are not reachable as 1-hop neighbors) of the
+              local <application>nrlsmf</application> node. The NRL MNE
+              processes use this command as needed. This command is only
+              available when <application>nrlsmf</application> is compiled
+              with the MNE_SUPPORT macro enabled.</entry>
             </row>
 
             <row xreflabel="smfPkt">
@@ -806,13 +1218,14 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
               info&gt;<anchor id="smfPkt"/></literal></entry>
 
               <entry>This interprocess message is generated by
-              <emphasis>nrlsmf</emphasis> and sent via "remote control
+              <application>nrlsmf</application> and sent via "remote control
               interface" interprocess communication to the process identified
               by the "tap" command, if applicable. Additionally, this same
-              message can be sent to <emphasis>nrlsmf</emphasis> to pass
-              packets back to <emphasis>nrlsmf</emphasis> for forwarding. The
-              format of the <literal>&lt;binary packet info&gt;</literal> is
-              described <link linkend="smfPktFormat">below</link>.</entry>
+              message can be sent to <application>nrlsmf</application> to pass
+              packets back to <application>nrlsmf</application> for
+              forwarding. The format of the <literal>&lt;binary packet
+              info&gt;</literal> is described <link
+              linkend="smfPktFormat">below</link>.</entry>
             </row>
           </tbody>
         </tgroup>
@@ -822,16 +1235,16 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
       <title><anchor id="smfPktFormat"/>The "smfPkt" Command Format</title>
 
       <para>The "<literal>smfPkt</literal>" command is used to pass packets
-      to/from <emphasis>nrlsmf</emphasis> and external processes. This allows
-      for external processes to insert themselves into the SMF forwarding
-      process and provide additional filtering, etc of packets that SMF would
-      forward. The "argument" of the "<literal>smfPkt</literal>" command is
-      actually a binary format that includes a header with forwarding
-      information and an entire Ether-type frame structure (i.e., 14-byte
-      Ether-type header and IP packet payload). Since the "smfPkt" string and
-      its delimiting ASCII "space" character is a total of 7 bytes in length,
-      the binary content begins at the 8th byte of the "smfPkt" command
-      message.</para>
+      to/from <application>nrlsmf</application> and external processes. This
+      allows for external processes to insert themselves into the SMF
+      forwarding process and provide additional filtering, etc of packets that
+      SMF would forward. The "argument" of the "<literal>smfPkt</literal>"
+      command is actually a binary format that includes a header with
+      forwarding information and an entire Ether-type frame structure (i.e.,
+      14-byte Ether-type header and IP packet payload). Since the "smfPkt"
+      string and its delimiting ASCII "space" character is a total of 7 bytes
+      in length, the binary content begins at the 8th byte of the "smfPkt"
+      command message.</para>
 
       <para>The binary content begins with 1 byte that is an "indexCount",
       that indicates the length of a list of interface indices that
@@ -840,10 +1253,10 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
       which the subject packet arrived (i.e., the "inbound interface index").
       The remaining interface indices in the list (the "outbound interface
       index list") are the interfaces on which the subject packet will be (or
-      would have been) forwarded by the <emphasis>nrlsmf</emphasis> process.
-      Again, note that the "indexCount" is one greater than the number of
-      outbound interface indices (i.e., the count includes the inbound
-      interface index).</para>
+      would have been) forwarded by the <application>nrlsmf</application>
+      process. Again, note that the "indexCount" is one greater than the
+      number of outbound interface indices (i.e., the count includes the
+      inbound interface index).</para>
 
       <para>Immediately following the list of interface indices, the packet,
       in Ether-type frame format, is included. This includes a 14-byte
@@ -871,20 +1284,21 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
   <sect1 id="RemoteControl">
     <title>Run-Time Remote Control</title>
 
-    <para>The <emphasis>nrlsmf</emphasis> application provides an interprocess
-    communication "remote control" interface for receiving run-time
-    instructions from other processes. The "remote control" interface is
-    identified by a canonical name &lt;<emphasis>instanceName</emphasis>&gt;.
-    The default name used by <emphasis>nrlsmf</emphasis> is, strangely enough,
-    "nrlsmf". However, an alternative name can be specified using the instance
-    command-line option described above. This might be useful if multiple
-    <emphasis>nrlsmf</emphasis> instances are required to cover multiple
+    <para>The <application>nrlsmf</application> application provides an
+    interprocess communication "remote control" interface for receiving
+    run-time instructions from other processes. The "remote control" interface
+    is identified by a canonical name
+    &lt;<parameter>instanceName</parameter>&gt;. The default name used by
+    <application>nrlsmf</application> is, strangely enough, "nrlsmf". However,
+    an alternative name can be specified using the instance command-line
+    option described above. This might be useful if multiple
+    <application>nrlsmf</application> instances are required to cover multiple
     network interfaces.</para>
 
     <para>On UNIX systems, the &lt;<literal>instanceName</literal>&gt;
     corresponds to a Unix-domain datagram socket named
     "<filename>/tmp/&lt;instanceName&gt;</filename>" that is opened and
-    monitored for commands (thus the default <emphasis>nrlsmf</emphasis>
+    monitored for commands (thus the default <application>nrlsmf</application>
     Unix-domain socket would be identified as
     "<filename>/tmp/nrlsmf</filename>"). On WIN32 systems, a "mailslot" named
     "<filename>\\.\mailslot\&lt;instanceName&gt;</filename>" is created and
@@ -896,19 +1310,19 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
   <sect1>
     <title>Current Limitations</title>
 
-    <para>There are limitations in the use of some <emphasis>nrlsmf</emphasis>
-    options. Many of these limitations are a result of
-    <emphasis>nrlsmf</emphasis> being a cross-platform, user-space
-    implementation. Many of these subtleties could be overcome with a kernel
-    implementation of the code.</para>
+    <para>There are limitations in the use of some
+    <application>nrlsmf</application> options. Many of these limitations are a
+    result of <application>nrlsmf</application> being a cross-platform,
+    user-space implementation. Many of these subtleties could be overcome with
+    a kernel implementation of the code.</para>
 
     <para>For example, to take advantage of configured firewall rules and/or
     quality-of-service (QoS) policies for multicast data transmission and
-    forwarding, it may be desirable to use the <emphasis>nrlsmf</emphasis>
-    "<literal>firewallForward</literal>" and/or
-    "<literal>firewallCapture</literal>" options. There are some limitations
-    associated with the user-space mechanisms available to capture and
-    "forward" packets in this manner.</para>
+    forwarding, it may be desirable to use the
+    <application>nrlsmf</application> "<literal>firewallForward</literal>"
+    and/or "<literal>firewallCapture</literal>" options. There are some
+    limitations associated with the user-space mechanisms available to capture
+    and "forward" packets in this manner.</para>
 
     <orderedlist>
       <listitem>
@@ -989,17 +1403,18 @@ nrlsmf [version][ipv6][firewallForward {on|off}][firewallCapture {on|off}
     </orderedlist>
 
     <para>Some of these limitations may be addressed in future versions of
-    <emphasis>nrlsmf</emphasis> if possible. It may be possible in some cases
-    that system configuration (perhaps using virtual interface capabilities)
-    may provide work-around solutions for some of these issues.</para>
+    <application>nrlsmf</application> if possible. It may be possible in some
+    cases that system configuration (perhaps using virtual interface
+    capabilities) may provide work-around solutions for some of these
+    issues.</para>
   </sect1>
 
   <sect1>
     <title>Future Plans</title>
 
     <para>There are a number of additional features and refinements planned
-    for the <emphasis>nrlsmf</emphasis> implementation. Some of these (in
-    roughly priority order) include:</para>
+    for the <application>nrlsmf</application> implementation. Some of these
+    (in roughly priority order) include:</para>
 
     <orderedlist>
       <listitem>

@@ -84,8 +84,8 @@ MulticastFIB::Membership::~Membership()
     downstream_relay_list.Destroy();
 }
 
-bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcIp, 
-                                                       const ProtoAddress&  prevHopAddr, 
+bool MulticastFIB::Membership::ActivateDownstreamRelay(const ProtoAddress&  srcIp,
+                                                       const ProtoAddress&  prevHopAddr,
                                                        unsigned int         refreshTick,
                                                        unsigned int         timeoutTick)
 {
@@ -800,8 +800,9 @@ double MulticastFIB::UpstreamHistory::UpdateLossEstimate(unsigned int gapCount)
 
 MulticastFIB::UpstreamRelay::UpstreamRelay(const ProtoAddress& addr, unsigned int ifaceIndex)
  : relay_addr(addr), iface_index(ifaceIndex), relay_status(NULLARY), update_count(0),
-   update_start(0), update_max(true), adv_id(0), adv_metric(-1.0), adv_ttl(0), adv_hop_count(0), link_quality(-1.0)
+   update_start(0), update_max(true), link_quality(-1.0)
 {
+
 }
 
 MulticastFIB::UpstreamRelay::UpstreamRelay()
@@ -1570,7 +1571,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
         double linkQuality = nextRelay->GetLinkQuality();
         if (NULL != bestLinkRelay)
         {
-            bool bestLinkTimeout = bestLinkAge >= (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
+             bool bestLinkTimeout = bestLinkAge >= (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
                                                                MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
             bool upstreamRelayActive = upstreamAge < (IsActive() ? MulticastFIB::DEFAULT_RELAY_ACTIVE_TIMEOUT :
                                                                    MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT);
@@ -1716,7 +1717,7 @@ MulticastFIB::UpstreamRelay* MulticastFIB::Entry::GetBestUpstreamRelay(unsigned 
     return best_relay;
 
 }  // end MulticastFIB::Entry::GetBestUpstreamRelay()
-        
+
 MulticastFIB::TokenBucket* MulticastFIB::Entry::GetBucket(unsigned int ifaceIndex)
 {
     TokenBucket* bucket = bucket_list.FindBucket(ifaceIndex);
@@ -2714,23 +2715,19 @@ void ElasticMulticastController::HandleIGMP(ProtoPktIGMP& igmpMsg, const ProtoAd
 }  // end ElasticMulticastController::HandleIGMP()
 
 // The external input mechanism passes these in
-void ElasticMulticastController::HandleAck(const ElasticAck& ack, 
-                                           unsigned int ifaceIndex, 
+void ElasticMulticastController::HandleAck(const ElasticAck&   ack, 
+                                           Interface*          smfIface,   // the outbound interface to which the EM_ACK is for
                                            const ProtoAddress& ackSrcIp,   // ackSrcIp is source of EM_ACK
-                                           const ProtoAddress& ackPrevHop) // ackPrevHop may be MAC or IP (tunnel) addr
+                                           const ProtoAddress& ackPrevHop) // ackPrevHop may be MAC or IP (tunnel)
 {
-    auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
-    Smf::Interface* iface = smf->GetInterface(ifaceIndex);
-    if (NULL == iface)
-    {
-        PLOG(PL_ERROR, "ElasticMulticastController::HandleAck() unknown interface index %d!\n", ifaceIndex);
-        return;
-    }
+    //auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
+    Smf::Interface* iface = static_cast<Smf::Interface*>(smfIface);
     if (iface->GetIpAddress().GetType() == ProtoAddress::INVALID)
     {
         PLOG(PL_WARN, "ElasticMulticastController::HandleAck() no IP address on interface %s!\n", iface->GetNameStr());
         return;
     }
+    unsigned int ifaceIndex = iface->GetIndex();
 
     // TBD - confirm that it's for me
     ProtoAddress dstIp, srcIp;
@@ -2778,16 +2775,17 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
     // TBD - use (per interface) configured ACK timout instead of hard-coded default
     // Note if first activated membership the ticker is reset to zero
     unsigned int currentTick = membership_timer.IsActive() ? UpdateTicker() : ResetTicker();
-    
+
     // Important to update the downstream_relay_list _first_ so "ActivateMemberhip" sets the proper timeout
     // (TBD - perhaps the two steps here should be consolidated for more straightforward code?)
     unsigned int timeoutTick = currentTick + (unsigned int)(MulticastFIB::DEFAULT_ACK_TIMEOUT*TICK_RATE);
- 
+
+    // ackPrevHop here may be previous hop MAC addr or IP remote tunnel endpoint address (inc. INADDR_ANY for mGRE)
     if (membership->ActivateDownstreamRelay(ackSrcIp, ackPrevHop, currentTick, timeoutTick))
     {
         OnDownstreamRelayChange(*membership, false);  // change due to arriving EM_ACK or other relay timeouts
     }
-    
+
     timeoutTick = membership->GetNextElasticTimeoutTick();  // returns refresh tick of least fresh DownstreamRelay (first to timeout)
     if (!ActivateMembership(*membership, MulticastFIB::Membership::ELASTIC, currentTick, timeoutTick))
     {
@@ -2799,9 +2797,9 @@ void ElasticMulticastController::HandleAck(const ElasticAck& ack,
         }
         return;
     }
-    
+
     membership->ResetIdleCount();  // reset packet-count based "timeout"    
-    
+
     if (updateForwarder)
     {
         ProtoFlow::Description flowDescription(dstIp, srcIp, trafficClass, protocol);
@@ -3010,14 +3008,14 @@ void ElasticMulticastController::OnAdvertisementTimeout(ProtoTimer& /*theTimer*/
 
 // This is called when the data/forwarding plane issues an update for a flow to the controller
 // "pktCount" is how many packets for the given flow have been received from given relay since the last update
-// "pktInterval" indicates number of ticks since last update (not currently used)
+// "updateInterval" indicates number of ticks since last update.
 void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescription,
-                                        unsigned int                   ifaceIndex,  // inbound interface index (unused) 
-                                        const ProtoAddress&            relayAddr,   // upstream relay addr              
-                                        unsigned int                   pktCount,                                        
-                                        unsigned int                   updateInterval,                                     
+                                        unsigned int                   ifaceIndex,  // inbound interface index (unused)
+                                        const ProtoAddress&            relayAddr,   // upstream relay addr
+                                        unsigned int                   pktCount,
+                                        unsigned int                   updateInterval,
                                         bool                           oldAckingStatus,
-                                        bool                           activateAdvertisements)                                 
+                                        bool                           activateAdvertisements)
 {
     if (GetDebugLevel() >= PL_DEBUG)
     {
@@ -3070,8 +3068,8 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
                 }
                 DeactivateMembership(*membership, MulticastFIB::Membership::ELASTIC);
                 mcast_forwarder->SetForwardingStatus(flowDescription, 
-                                                     membership->GetInterfaceIndex(), 
-                                                     membership->GetDefaultForwardingStatus(), 
+                                                     membership->GetInterfaceIndex(),
+                                                     membership->GetDefaultForwardingStatus(),
                                                      oldAckingStatus);
                 // This should generally return true
                 if (membership->UpdateDownstreamRelays(pktCount))

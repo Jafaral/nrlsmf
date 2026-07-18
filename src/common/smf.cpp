@@ -67,7 +67,7 @@ Smf::Interface::Extension::~Extension()
 Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
  : if_index(ifIndex), if_name(ifName), resequence(false), is_tunnel(false),
    is_layered(false), is_igmp_proxy(false), is_reliable(false), use_etx(false),
-  
+
    ump_sequence(0), ip_encapsulate(false), dup_detector(NULL),
    unicast_group_count(0),
 #ifdef ELASTIC_MCAST
@@ -560,6 +560,8 @@ void Smf::DeleteInterface(Interface* iface)
     if (NULL != iface)
     {
         iface_list.Remove(*iface);
+        // Remove interface index/address from our InterfaceInfoTable
+        iface_info_table.RemoveIndex(iface->GetIndex());
         delete iface;
     }
 }  // end Smf::DeleteInterface()
@@ -1065,7 +1067,7 @@ Smf::DpdType Smf::ResequenceIPv6(ProtoPktIPv6&   ipv6Pkt,     // input/output
 // (the "dstIfArray" is populated with the list of indices for those interfaces)
 int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the packet (may be modified)
                        const ProtoAddress& prevHopAddr,    // input - previous hop MAC addr (or IP addr if from tunnel iface)
-                       const ProtoAddress& dstMac,         // input - destination MAC addr of packet (typically mcast)
+                       const ProtoAddress& nextHopAddr,    // input - destination MAC addr (or IP addr if from tunnel iface)
                        Interface&          srcIface,       // input - Smf::Interface on which packet arrived
                        unsigned int        dstIfArray[],   // output - list of interface indices to which packet should be forwarded
                        unsigned int        dstIfArraySize, // input - size of "dstIfArray[]" passed in
@@ -1174,38 +1176,83 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                 case ElasticMsg::ACK:
                                 {
                                     ElasticAck elasticAck(elasticMsg);
+                                    Smf::Interface* upstreamIface = NULL;
                                     ProtoAddress upstreamAddr;
                                     UINT8 upstreamCount = elasticAck.GetUpstreamListLength();
-                                    bool needDstCheck = true;
                                     for (UINT8 i = 0; i < upstreamCount; i++)
                                     {
                                         if (elasticAck.GetUpstreamAddr(i, upstreamAddr))
                                         {
-                                            unsigned int upstreamIndex;   
-                                            if (srcIface.IsGRE() && upstreamAddr.HostIsEqual(srcIface.GetTunnelLocalAddress()))
-                                                upstreamIndex = srcIface.GetIndex();
-                                            else
+                                            // Use the upstreamAddr and possibly prevHopAddr to identify
+                                            // the interface. The upstreamAddr may be ETH or IP
+                                            unsigned int upstreamIndex;
+                                            ProtoAddress::Type addrType = upstreamAddr.GetType();
+                                            if (ProtoAddress::ETH == addrType)
+                                            {
+                                                // 1) If the upstreamAddr is a MAC addr we just look up the
+                                                //    upstreamIndex from the the InterfaceInfoTable (Case A)
                                                 upstreamIndex = GetInterfaceIndex(upstreamAddr);
-                                            if (0 != upstreamIndex)
+                                                // As a backup, check to see if this ACK was destined to a
+                                                // local MAC address (needed when ARP mediation is in play)
+                                                if ((0 == upstreamIndex) && (ProtoAddress::ETH == nextHopAddr.GetType()))
+                                                    upstreamIndex = GetInterfaceIndex(nextHopAddr);
+                                                if (0 != upstreamIndex)
+                                                    upstreamIface = GetInterface(upstreamIndex);
+                                                if (NULL != upstreamIface)
+                                                {
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to Ethertype interface '%s'\n",
+                                                                    upstreamIface->GetNameStr());
+                                                }
+                                            }
+                                            else
+                                            {
+                                                // 2) If the upstreamAddr is an IP address, it is either
+                                                // associated with an interface assigned to nrlsmf or is a
+                                                // tunnel local endpoint address. If it is a tunnel, we need
+                                                // to determine which type and which one ... (Case B3)
+                                                if (((ProtoAddress::IPv4 == upstreamAddr.GetType()) &&
+                                                     upstreamAddr.HostIsEqual(PROTO_ADDR_ANY)) ||
+                                                    ((ProtoAddress::IPv6 == upstreamAddr.GetType()) &&
+                                                     upstreamAddr.HostIsEqual(PROTO_ADDR_ANY6)))
+                                                {
+                                                    // 2a) It's an EM_ACK in reponse to a packet from an mGRE iface
+                                                    // If it's for one our our mGRE interfaces, the srcIp
+                                                    // should be in same subnet as address the mGRE iface addr
+                                                    upstreamIndex = FindTunnelIndex(srcIp, upstreamAddr);
+                                                    if (0 != upstreamIndex)
+                                                        upstreamIface = GetInterface(upstreamIndex);
+                                                    if (NULL != upstreamIface)
+                                                    {
+                                                        PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to mGRE interface '%s'\n",
+                                                                        upstreamIface->GetNameStr());
+                                                    }
+                                                }
+                                                else if ((0 != (upstreamIndex = GetTunnelIndex(srcIp, upstreamAddr))) &&
+                                                          (NULL != (upstreamIface = GetInterface(upstreamIndex))))
+                                                {
+                                                    // 2b) It's an EM_ACK in reponse to a packet from a P2P GRE tunnel where
+                                                    //     upstream/src addrs == tunnel local/remote endpoint addrs (Case B2)
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to GRE interface '%s'\n",
+                                                                    upstreamIface->GetNameStr());
+                                                }
+                                                else if ((0 != (upstreamIndex = GetInterfaceIndex(upstreamAddr))) &&
+                                                         (NULL != (upstreamIface = GetInterface(upstreamIndex))))
+                                                {
+                                                    // It's an EM_ACK in response to an EM_ADV sent on upstreamIface (Case B1)
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to interface '%s'\n",
+                                                                    upstreamIface->GetNameStr());
+                                                }
+                                                // else not for me
+                                            }  // end if (elasticAck.GetUpstreamAddr(i, upstreamAddr))
+                                            if (NULL != upstreamIface)
                                             {
                                                 // TBD - prevHopAddr here will need to be replaced in the future
                                                 // using previous hop addr embedded in EM_ACK for asymm support
-                                                mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp, prevHopAddr);
-                                                needDstCheck = false;
+                                                mcast_controller->HandleAck(elasticAck, upstreamIface, srcIp, prevHopAddr);
                                             }
+                                            // else // else not for me
                                         }
-                                    }
-                                    if (needDstCheck)
-                                    {
-                                        // This is a "backup" check to see if this ACK was destined to
-                                        // a local MAC address (needed when ARP mediation is in play)  (test for GRE compatibility?)
-                                        unsigned int upstreamIndex = GetInterfaceIndex(dstMac);
-                                        if (0 != upstreamIndex)
-                                        {
-                                            mcast_controller->HandleAck(elasticAck, upstreamIndex, srcIp, prevHopAddr);
-                                        }
-                                    }
-                                    // else not for me
+                                    } // end for (UINT8 i = 0; i < upstreamCount
                                     break;
                                 }
                                 case ElasticMsg::ADV:
@@ -2351,8 +2398,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             if (((ttl > 1) || is_tunnel || outbound) && ((unsigned int)dstCount < dstIfArraySize))
             {
                 dstIfArray[dstCount++] = dstIface.GetIndex();
-                
-                
+
+
             }
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): Preparing to forward! DstCount = %d \n", dstCount );
         }
@@ -2869,7 +2916,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             //if (srcIface.UseETX())
             if (advMetric >= 0.0)  // this means we are in "advertise" mode handling an advertisement
             {
-                
+
                 MulticastFIB::UpstreamRelay* bestRelay = fibEntry->GetBestUpstreamRelay(currentTick);
                 if (NULL != bestRelay)
                 {
@@ -2911,7 +2958,7 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     {
         // Report how many packets seen for this flow and interval from this upstream relay since last update
         // (TBD - if controller and forwarder have shared FIB, this could be economized)
-        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(),prevHopAddr, pktCount, updateInterval,
+        mcast_controller->Update(fibEntry->GetFlowDescription(), srcIface.GetIndex(), prevHopAddr, pktCount, updateInterval,
                                 fibEntry->GetAckingStatus(), activateAdvertisements);
     }
     if (sendAck)
@@ -2961,18 +3008,18 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     char pktId[16+2];  // worst case is IPv6 advertiser and 16-bit ElasticAdv ID
     unsigned int pktIdSize = 18*8;  // in bits
 
-    flowId[0] = (char)255;  // fake 'dpdType' to differentiate within dup table (TBD - do this for packet entries, too)
+    flowId[0] = (char)255;  // fake 'dpdType' to differentiate advertisements within dup table (TBD - do this for all DPD entries???)
     switch (srcIp.GetType())
     {
         case ProtoAddress::IPv4:
-            // flowId is nonce;proto:src:dst, 8 + 32 + 32 bits
+            // flowId is nonce:proto:src:dst, 8 + 8 + 32 + 32 bits
             flowId[1] = (char)protocol;
             memcpy(flowId+2, srcIp.GetRawHostAddress(), 4);
             memcpy(flowId+6, dstIp.GetRawHostAddress(), 4);
             flowIdSize = (8 + 8 + 32 + 32);
             break;
         case ProtoAddress::IPv6:
-            // flowId is proto:src:dst, 8 + 128 + 128 bits
+            // flowId is nonce:proto:src:dst, 8 + 8 + 128 + 128 bits
             flowId[1] = (char)protocol;
             memcpy(flowId+2, srcIp.GetRawHostAddress(), 16);
             memcpy(flowId+18, dstIp.GetRawHostAddress(), 16);
@@ -2985,9 +3032,9 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     UINT16 advId = elasticAdv.GetId();  // no need to do Endian swap since this is farm use only
     memcpy(pktId + advIp.GetLength(), &advId, 2);
     pktIdSize = (advIp.GetLength() + 2) * 8;
-    
+
     const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : prevHopAddr;
-    
+
     if (srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize))
     {
         PLOG(PL_DEBUG, "Smf::HandleAdv() duplicate EM_ADV\n");
@@ -2996,13 +3043,16 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         MulticastFIB::Entry* fibEntry = mcast_fib.FindBestMatch(flowDescription);
         if (NULL == fibEntry) return; // do nothing
         MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->FindUpstreamRelay(relayAddr);
-        if (NULL == upstreamRelay) 
+        if (NULL == upstreamRelay)
         {
+            ASSERT(0);  // TBD should we create new upstream relay state here or before this method is entered?
             return;  // no upstream relay state
         }
+        upstreamRelay->UpdateAdvertisementState(currentTick, advIp, elasticAdv.GetId(),  &elasticAdv);
         //upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
         //upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
         //upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
+
         if (NULL != upstreamHistory)
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         return;  // do nothing else, this is a duplicate EM_ADV message
@@ -3019,11 +3069,7 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         {
             PLOG(PL_DEBUG, "Smf::HandleAdv() saving EM_ADV info id:%hu metric:%lf for relay: %s\n",
                             advId, elasticAdv.GetMetric(), upstreamRelay->GetAddress().GetHostString());
-            upstreamRelay->SetAdvAddr(advIp);
-            upstreamRelay->SetAdvId(advId);
-            upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
-            upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
-            upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
+            upstreamRelay->UpdateAdvertisementState(currentTick, advIp, elasticAdv.GetId(),  &elasticAdv);
             if (NULL != upstreamHistory)
                 upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         }
@@ -3195,25 +3241,31 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
                   const ProtoFlow::Description& flowDescription)
 {
     // Buid Elastic Ack message (IPv4 only at moment)
-    const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ? upstreamAddr : ElasticNack::ELASTIC_MAC;  
+    const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ? upstreamAddr : ElasticNack::ELASTIC_MAC;
 
     if (iface.GetIpAddress().GetType() == ProtoAddress::INVALID)
     {
         PLOG(PL_WARN, "Smf::SendAck()  no IP address on interface %s!\n", iface.GetNameStr());
         return false;
     }
+    // The EM_ACK srcIp depends on whether interface is ETH, GRE, or mGRE
+    const ProtoAddress& srcIp = (iface.IsGRE() &&
+                                 !iface.GetTunnelRemoteAddress().HostIsEqual(PROTO_ADDR_ANY) &&
+                                 !iface.GetTunnelRemoteAddress().HostIsEqual(PROTO_ADDR_ANY6)) ?
+                                    iface.GetTunnelLocalAddress() : iface.GetIpAddress();
     UINT32 buffer[1416/4];
     unsigned int bufferLen = 1416;
     unsigned int frameMax = bufferLen - 2;  // offset by 2 bytes to maintain alignment for ProtoPktIP
     UINT16* ethBuffer = ((UINT16*)buffer) + 1;  // offset for IP packet alignment
     ProtoPktETH ethPkt(ethBuffer, frameMax);
-    ethPkt.SetSrcAddr(iface.GetInterfaceAddress());
+    if (iface.GetInterfaceAddress().IsValid())  // GRE interfaces may not have a valid hardware address
+        ethPkt.SetSrcAddr(iface.GetInterfaceAddress());
     ethPkt.SetDstAddr(dstMac);
     ethPkt.SetType(ProtoPktETH::IP);  // TBD - base upon IP address type
     ProtoPktIPv4 ip4Pkt(ethPkt.AccessPayload(), ethPkt.GetBufferLength() - ethPkt.GetHeaderLength());
-    ip4Pkt.SetTTL(1);
+    ip4Pkt.SetTTL(5);
     ip4Pkt.SetProtocol(ProtoPktIP::UDP);
-    ip4Pkt.SetSrcAddr(iface.GetIpAddress());
+    ip4Pkt.SetSrcAddr(srcIp);
     ip4Pkt.SetDstAddr(ElasticAck::ELASTIC_ADDR);
     ProtoPktUDP udpPkt(ip4Pkt.AccessPayload(), ip4Pkt.GetBufferLength() - ip4Pkt.GetHeaderLength() - ProtoPktUMP::GetOptionLength(), false);
     udpPkt.SetSrcPort(ElasticAck::ELASTIC_PORT);
@@ -3233,7 +3285,7 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
         //    addrType = ElasticAck::ADDR_IPV6;
         //    break;
         default:
-            PLOG(PL_ERROR, "Smf::SendAck() error: unsupported orinvalid flow dst address\n");
+            PLOG(PL_ERROR, "Smf::SendAck() error: unsupported or invalid flow dst address\n");
             return false;
     }
     if (flowDescription.GetSrcLength() != flowDescription.GetDstLength())
@@ -3365,7 +3417,19 @@ void Smf::AdvertiseActiveFlows()
     PLOG(PL_DEBUG, "Smf::AdvertiseActiveFlows() ...\n");
     // TBD - for improved controller/forward separation, this method should only use controller state with
     // "active" flows to be advertised tracked by the controller separate from forwarder mcast_fib ???
-    
+
+    // Updated approach (solves issue regarding not advertising flows from local, non-advertising neighbors)
+    // Build an EM_ADV message for each interface in the Elastic Multicast interface group.
+    // 1) Provision an EM_ADV message (will be sourced from each interface in group)
+    // 2) For each active flow, determine if there's an active "best upstream relay"
+    // 3) Additionally, determine if the flow has a non-advertising upstream
+    // 4) If #3 only, originate advertisment for that flow
+    // 5) If #2 only, forward the advertisement for that flow if pending
+    // 6) If #2 and #3, examine TTL information to determine if the local node
+    //    is now the "best upstream" and should originate advertisement.
+    // 7) Note if the local node is the originator, then it should always forward on timeout
+    // TBD - implement per-upstream advertisment validity timeouts and per-interface advertisement refresh!!!
+
     unsigned int currentTick = time_ticker.Update();
     // Build up EM_ADV message(s) for each interface pending EM_ADV transmission
     UINT32 buffer[1416/4];
@@ -3415,7 +3479,7 @@ void Smf::AdvertiseActiveFlows()
         {
             if (GetDebugLevel() >= PL_DEBUG)
             {
-                PLOG(PL_ALWAYS, "  iterated to fibEntry ");
+                PLOG(PL_ALWAYS, "  iface:%d iterated to fibEntry ", iface->GetIndex(), fibEntry);
                 fibEntry->PrintDescription();
                 PLOG(PL_ALWAYS, " active:%d managed:%d\n", fibEntry->IsActive(), fibEntry->IsManaged());
             }
@@ -3606,7 +3670,7 @@ void Smf::AdvertiseActiveFlows()
                 {
                     ethPkt.SetPayloadLength(ip4Pkt.GetLength());
                     // Cache the packet for possible retransmission if NACKed
-                    //if (iface->IsReliable()) 
+                    //if (iface->IsReliable())
                     //{
                     //    UINT16 umpSequence = iface->GetUmpSequence();
                     //    CachePacket(*iface, umpSequence, (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
@@ -3636,7 +3700,7 @@ void Smf::AdvertiseActiveFlows()
     	MulticastFIB::UpstreamRelay* upstreamRelay = fibEntry->GetCurrentUpstreamRelay();
         if (NULL != upstreamRelay)
         {
-            upstreamRelay->ClearAdvAddr(); // so we don't duplicatively advertise this flow
+            upstreamRelay->ResetAdvertisement(); // so we don't duplicatively advertise this flow
         }
         else if (fibEntry->IsActive() && (fibEntry->Age(currentTick) < MulticastFIB::DEFAULT_RELAY_IDLE_TIMEOUT))
         {
@@ -3834,7 +3898,7 @@ bool Smf::OnPruneTimeout(ProtoTimer& /*theTimer*/)
                 {
                     if (!membership->FlagIsSet(MulticastFIB::Membership::ELASTIC))
                         continue; // this is a locally managed membership (not forwarded)
-                    if (first) 
+                    if (first)
                         first = false;
                     else
                         PLOG(PL_ALWAYS, ",");
