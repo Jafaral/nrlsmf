@@ -3,6 +3,7 @@
 # Outputs:
 #   nrlsmf.html  - single-file HTML (DocBook XSL)
 #   nrlsmf.pdf   - PDF via dblatex when available
+#   site/        - GitHub Pages bundle (index.html + resources/)
 #
 # Typical packages (Debian/Ubuntu):
 #   sudo apt install xsltproc docbook-xml docbook-xsl dblatex
@@ -13,6 +14,7 @@
 SOURCE   = nrlsmf.xml
 HTML_OUT = nrlsmf.html
 PDF_OUT  = nrlsmf.pdf
+SITE_DIR = site
 
 XSLTPROC ?= xsltproc
 DBLATEX  ?= dblatex
@@ -25,13 +27,19 @@ DOCBOOK_XSL_HTML ?= $(firstword $(wildcard \
 	/usr/local/share/docbook-xsl/html/docbook.xsl \
 	/opt/local/share/xsl/docbook-xsl/html/docbook.xsl))
 
-.PHONY: all html pdf clean check-tools
+.PHONY: all html pdf pages clean check-tools
 
 all: html pdf
 
 html: $(HTML_OUT)
 
 pdf: $(PDF_OUT)
+
+pages: html
+	rm -rf $(SITE_DIR)
+	mkdir -p $(SITE_DIR)/resources
+	cp $(HTML_OUT) $(SITE_DIR)/index.html
+	cp -r resources/. $(SITE_DIR)/resources/
 
 $(HTML_OUT): $(SOURCE)
 	@test -n "$(DOCBOOK_XSL_HTML)" || ( \
@@ -50,6 +58,7 @@ $(PDF_OUT): $(SOURCE)
 	$(DBLATEX) -o $@ $<
 
 clean:
+	rm -rf $(SITE_DIR)
 	rm -f $(HTML_OUT) $(PDF_OUT) *.aux *.log *.out *.toc *.idx *.ilg *.ind
 
 check-tools:

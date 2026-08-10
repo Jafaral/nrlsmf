@@ -13,6 +13,9 @@ docs-html:
 docs-pdf:
 	$(MAKE) -C doc pdf
 
+docs-site:
+	$(MAKE) -C doc pages
+
 install: elastic
 	sudo cp -u ./nrlsmf /usr/bin/nrlsmf
 
@@ -22,3 +25,5 @@ clean:
 
 clean-docs:
 	$(MAKE) -C doc clean
+
+.PHONY: docs docs-html docs-pdf docs-site clean-docs

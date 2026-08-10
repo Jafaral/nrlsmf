@@ -6,6 +6,9 @@ compile_commands.json
 # build executables
 makefiles/nrlsmf
 
+# generated documentation site bundle
+doc/site/
+
 # object files
 *.o
 
