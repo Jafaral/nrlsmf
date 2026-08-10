@@ -19,7 +19,7 @@
     <titleabbrev><emphasis>nrlsmf</emphasis> User's Guide</titleabbrev>
 
     <abstract>
-      <para>The NRL Simplified Multi cast Forwarding
+      <para>The NRL Simplified Multicast Forwarding
       (<application>nrlsmf</application>) project includes software for a
       user-space IP Multicast forwarding engine. This software was developed
       by the <ulink url="http://www.nrl.navy.mil/">Naval Research
@@ -29,6 +29,9 @@
       experimental techniques for robust, efficient distribution of IP
       Multicast packets in dynamic, wireless networks such as Mobile Ad-hoc
       Networks (MANETs).</para>
+
+      <para>A PDF version is available for download: <ulink
+      url="nrlsmf.pdf">nrlsmf User's Guide (PDF)</ulink>.</para>
     </abstract>
   </articleinfo>
 
@@ -130,7 +133,36 @@ make -f Makefile.linux elastic</programlisting>
     commands (see <link linkend="Commands">Commands</link>) available via the
     command-line may be applied during run-time using the "remote control"
     interprocess control interface (see <link linkend="RemoteControl">Remote
-    Control Interface</link>).</para>
+    Control Interface</link>). To launch <application>nrlsmf</application>,
+    use the following command-line syntax:</para>
+
+    <para><informalexample>
+        <programlisting><?dbfo keep-together="always"?>nrlsmf [version][ipv6][with-frr]
+       [firewallForward {on|off}][firewallCapture {on|off}]
+       [add [&lt;group&gt;,]{cf|smpr|ecds|push|rpush|merge|rmerge|tunnel},&lt;ifaceList&gt;]
+       [remove {&lt;group&gt; | [&lt;group&gt;,]&lt;ifaceList&gt;}]
+       [elastic &lt;group&gt;][advertise]
+       [cf &lt;ifaceList&gt;][smpr &lt;ifaceList&gt;][ecds &lt;ifaceList&gt;]
+       [push &lt;srcIface&gt;,&lt;dstIfaceList&gt;][rpush &lt;srcIface&gt;,&lt;dstIfaceList&gt;]
+       [merge &lt;ifaceList&gt;][rmerge &lt;ifaceList&gt;][tunnel &lt;ifaceList&gt;]
+       [forward {on|off}][relay {on|off}][delayoff &lt;value&gt;]
+       [device &lt;vifName&gt;,&lt;ifaceName&gt;[/{t|r|d}][,&lt;addr&gt;...]]
+       [map &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]]
+       [ujoin &lt;groupAddr&gt;,&lt;iface&gt;][uleave &lt;groupAddr&gt;,&lt;iface&gt;]
+       [vrf &lt;vrf-name&gt;,[&lt;vrf-id&gt;,]&lt;ifaceList&gt;]
+       [load &lt;configFile&gt;][save &lt;configFile&gt;]
+       [rate [&lt;iface&gt;,]&lt;bits/sec&gt;][queue [&lt;iface&gt;,]&lt;limit&gt;]
+       [unicast &lt;ifaceGroupName&gt;]
+       [dscpCapture &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
+       [dscpRelease &lt;dscpValue&gt;,&lt;dscpValueList&gt;]
+       [ihash &lt;algorithm&gt;][hash &lt;algorithm&gt;]
+       [idpd {on | off}][window {on | off}]
+       [instance &lt;instanceName&gt;][smfServer &lt;serverName&gt;]
+       [resequence {on|off}][ttl &lt;value&gt;][boost {on|off}]
+       [debug &lt;debugLevel&gt;][log &lt;logFile&gt;]
+
+Run "nrlsmf -help" for the complete list of supported commands.</programlisting>
+      </informalexample></para>
 
     <sect2 id="ExampleUsage">
       <title>Usage Examples</title>
@@ -222,7 +254,7 @@ make -f Makefile.linux elastic</programlisting>
     <para>The <application>nrlsmf</application> program supports a variety of
     commands that can be invoked via command-line at startup or at run-time
     using the "remote control" interprocess communication interfaces that is
-    provided. There a four rough categories of commands. These include:</para>
+    provided. There are several categories of commands. These include:</para>
 
     <orderedlist>
       <listitem>
@@ -246,6 +278,28 @@ make -f Makefile.linux elastic</programlisting>
         multicast traffic for other interfaces to/from MANET interfaces to
         help create gateways between SMF and other multicast routing
         domains.</para>
+      </listitem>
+
+      <listitem>
+        <para>"GRE Tunnel Commands" for Linux GRE and mGRE interfaces (see
+        <link linkend="GRETunnels">GRE Tunnel Interfaces</link>).</para>
+      </listitem>
+
+      <listitem>
+        <para>"Virtual Interface Commands" for SMF device and composite
+        interface (CID) operation (see <link
+        linkend="VirtualInterfaces">Virtual Interface Commands</link>).</para>
+      </listitem>
+
+      <listitem>
+        <para>"VRF Commands" for virtual routing contexts and FRR integration
+        (see <link linkend="VrfFrr">VRF and FRR Integration</link>).</para>
+      </listitem>
+
+      <listitem>
+        <para>"Configuration Commands" to load, save, and query JSON
+        configuration (see <link linkend="JsonConfig">JSON
+        Configuration</link>).</para>
       </listitem>
 
       <listitem>
@@ -1044,6 +1098,27 @@ make -f Makefile.linux elastic</programlisting>
             associations previously set up with the <command>map</command>
             command.</entry>
           </row>
+
+          <row>
+            <entry><literal>reliable &lt;ifaceList&gt;</literal></entry>
+
+            <entry>Enable experimental reliable hop-by-hop forwarding on
+            listed interfaces (adds UMP option to IPv4 packets).</entry>
+          </row>
+
+          <row>
+            <entry><literal>utos &lt;trafficClass&gt;</literal></entry>
+
+            <entry>Set the IP traffic class value to be ignored by reliable
+            forwarding.</entry>
+          </row>
+
+          <row>
+            <entry><literal>adaptive &lt;group&gt;</literal></entry>
+
+            <entry>Enable Smart Routing (adaptive routing) for the named
+            interface group.</entry>
+          </row>
         </tbody>
       </tgroup>
     </table>
@@ -1137,6 +1212,235 @@ make -f Makefile.linux elastic</programlisting>
         </tbody>
       </tgroup>
     </table>
+
+    <sect2 id="GRETunnels">
+      <title>GRE Tunnel Interfaces</title>
+
+      <para><application>nrlsmf</application> supports operation on Linux Generic
+      Routing Encapsulation (GRE) interfaces, including point-to-point GRE and
+      point-to-multipoint (mGRE) tunnels. GRE interfaces are treated
+      differently from Ethernet interfaces: packets received on a GRE interface
+      may not include a usable Ethernet header, and tunnel endpoint addresses
+      (local and remote) are used for forwarding and elastic multicast control
+      traffic.</para>
+
+      <para>When a GRE interface is opened, <application>nrlsmf</application>
+      attempts to read tunnel local and remote endpoint addresses from the
+      operating system. If valid endpoint information is available, it is
+      recorded automatically. Some GRE deployments (for example, lightweight
+      or externally-managed "metadata" GRE tunnels) may not expose complete
+      endpoint information to user space. In those cases, the
+      "<literal>map</literal>" command must be used to associate tunnel
+      endpoint addresses with the interface. A warning is logged when a GRE
+      interface is used without adequate endpoint mapping.</para>
+
+      <para>For mGRE operation, the remote endpoint may correspond to
+      <literal>INADDR_ANY</literal> (0.0.0.0). The underlay network may
+      require joining a multicast group so encapsulated traffic can be
+      received; use the "<literal>ujoin</literal>" and
+      "<literal>uleave</literal>" commands for this purpose on the physical
+      underlay interface (not on the GRE interface itself).</para>
+
+      <para>When elastic multicast is enabled, GRE tunnel endpoints are also
+      used to identify the correct interface for elastic control messages
+      (for example, EM_ACK). JSON configuration file support for GRE tunnel
+      mapping is not yet available; use command-line or run-time remote
+      control commands instead.</para>
+
+      <table>
+        <title>GRE Tunnel Commands</title>
+
+        <tgroup cols="2">
+          <colspec colname="Command" colwidth="1*"/>
+
+          <colspec colname="Description" colwidth="2.5*"/>
+
+          <tbody>
+            <row>
+              <entry><literal>map
+              &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+
+              <entry>Associate tunnel endpoint address information with
+              &lt;<literal>iface</literal>&gt;. If
+              &lt;<literal>remoteAddr</literal>&gt; is omitted or invalid, the
+              &lt;<literal>localAddr</literal>&gt; is recorded as an ordinary
+              local interface address. If
+              &lt;<literal>remoteAddr</literal>&gt; is valid, the mapping is
+              recorded as tunnel endpoint information for GRE or other tunnel
+              interfaces. For mGRE, &lt;<literal>remoteAddr</literal>&gt; may
+              be 0.0.0.0.</entry>
+            </row>
+
+            <row>
+              <entry><literal>unmap
+              &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+
+              <entry>Remove a previously configured tunnel or local address
+              mapping from &lt;<literal>iface</literal>&gt;. The address
+              arguments must match those supplied to
+              "<literal>map</literal>".</entry>
+            </row>
+
+            <row>
+              <entry><literal>ujoin
+              &lt;groupAddr&gt;,&lt;iface&gt;</literal></entry>
+
+              <entry>Join multicast group &lt;<literal>groupAddr</literal>&gt;
+              on underlay interface &lt;<literal>iface</literal>&gt; to enable
+              reception of mGRE multicast-encapsulated traffic. The group
+              address must be a valid IP multicast address.</entry>
+            </row>
+
+            <row>
+              <entry><literal>uleave
+              &lt;groupAddr&gt;,&lt;iface&gt;</literal></entry>
+
+              <entry>Leave multicast group &lt;<literal>groupAddr</literal>&gt;
+              on underlay interface &lt;<literal>iface</literal>&gt;.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+
+      <para><emphasis>Example:</emphasis> The following example adds GRE and
+      Ethernet interfaces to a flooding group, maps explicit tunnel endpoints
+      for a metadata GRE interface, and joins an underlay multicast group
+      for mGRE reception:</para>
+
+      <programlisting><?dbfo keep-together="always"?>nrlsmf add mygroup,cf,gre0,eth0 \
+       map gre0,10.0.0.1,10.0.0.2 \
+       ujoin 239.1.1.1,eth0</programlisting>
+    </sect2>
+
+    <sect2 id="VirtualInterfaces">
+      <title>Virtual Interface Commands</title>
+
+      <para>SMF supports virtual interface constructs that associate a
+      user-space forwarding path with one or more underlying physical
+      interfaces. These are commonly used for host integration, composite
+      devices, and encapsulation.</para>
+
+      <table>
+        <title>Virtual Interface Commands</title>
+
+        <tgroup cols="2">
+          <colspec colname="Command" colwidth="1*"/>
+          <colspec colname="Description" colwidth="2.5*"/>
+
+          <tbody>
+            <row>
+              <entry><literal>device
+              &lt;vifName&gt;,&lt;ifaceName&gt;[/{t|r|d}][,&lt;addr&gt;...]</literal></entry>
+              <entry>Create a virtual SMF interface (vif) associated with one
+              or more physical interfaces. Optional flags on
+              &lt;<literal>ifaceName</literal>&gt; are
+              <literal>t</literal> (transmit), <literal>r</literal> (receive),
+              or <literal>d</literal> (delete). Additional addresses may be
+              listed after the interface name.</entry>
+            </row>
+            <row>
+              <entry><literal>cid
+              &lt;vifName&gt;,&lt;iface1&gt;[/{t|r|d}][,&lt;iface2&gt;...]</literal></entry>
+              <entry>Add or remove elements of a Composite Interface Device
+              associated with an SMF virtual interface.</entry>
+            </row>
+            <row>
+              <entry><literal>layered &lt;ifaceList&gt;</literal></entry>
+              <entry>Mark interfaces as layered, indicating they have their
+              own underlying multicast distribution mechanism.</entry>
+            </row>
+            <row>
+              <entry><literal>igmpProxy &lt;ifaceList&gt;</literal></entry>
+              <entry>Send IGMP joins on listed interfaces for groups of
+              interest. Typically used with layered interfaces.</entry>
+            </row>
+            <row>
+              <entry><literal>encapsulate &lt;ifaceList&gt;</literal></entry>
+              <entry>Use IPIP encapsulation for outbound unicast packets on
+              listed SMF device interfaces.</entry>
+            </row>
+            <row>
+              <entry><literal>filterDups {on | off}</literal></entry>
+              <entry>Enable or disable duplicate packet filtering for SMF
+              device operation. (default = on)</entry>
+            </row>
+            <row>
+              <entry><literal>route
+              &lt;dstAddr&gt;,&lt;nextHopAddr&gt;</literal></entry>
+              <entry>Add a debug route used with encapsulation testing.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+    </sect2>
+
+    <sect2 id="VrfFrr">
+      <title>VRF and FRR Integration</title>
+
+      <para><application>nrlsmf</application> can associate interfaces with named
+      virtual routing and forwarding (VRF) contexts. When run alongside FRR,
+      VRF information may be imported at startup.</para>
+
+      <table>
+        <title>VRF Commands</title>
+
+        <tgroup cols="2">
+          <colspec colname="Command" colwidth="1*"/>
+          <colspec colname="Description" colwidth="2.5*"/>
+
+          <tbody>
+            <row>
+              <entry><literal>vrf
+              &lt;vrf-name&gt;,[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</literal></entry>
+              <entry>Associate one or more interfaces with the named VRF. An
+              optional numeric VRF identifier may be supplied.</entry>
+            </row>
+            <row>
+              <entry><literal>with-frr</literal></entry>
+              <entry>Run alongside FRR and pull configuration where appropriate,
+              such as VRF information. This option must appear early on the
+              command line.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+    </sect2>
+
+    <sect2 id="JsonConfig">
+      <title>JSON Configuration</title>
+
+      <para><application>nrlsmf</application> supports loading and saving
+      configuration in JSON format. Some advanced options (including GRE tunnel
+      mapping) are not yet available via JSON and must be configured using
+      command-line or remote control commands.</para>
+
+      <table>
+        <title>Configuration Commands</title>
+
+        <tgroup cols="2">
+          <colspec colname="Command" colwidth="1*"/>
+          <colspec colname="Description" colwidth="2.5*"/>
+
+          <tbody>
+            <row>
+              <entry><literal>load &lt;configFile&gt;</literal></entry>
+              <entry>Load an nrlsmf JSON configuration file at startup or at
+              run-time.</entry>
+            </row>
+            <row>
+              <entry><literal>save &lt;configFile&gt;</literal></entry>
+              <entry>Save the current configuration to a JSON file, typically
+              upon exit.</entry>
+            </row>
+            <row>
+              <entry><literal>stats</literal></entry>
+              <entry>Return interface and group information via the remote
+              control interface.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+    </sect2>
 
     <para>The "Remote-only Commands" listed here can be invoked only via the
     run-time, interprocess remote-control interface (see <link

@@ -56,5 +56,29 @@ nrlsmf.exe for WinCE platforms including the required
 Rawether libraries).  A workspace (nrlsmf.vcw) and project
 files are provided for the Embedded Visual C++ compiler.
 
-See the "nrlsmf.html" or "nrlsmf.pdf" file for further
-instructions.
+Documentation
+
+The nrlsmf User's Guide source is in doc/nrlsmf.xml (DocBook XML).
+From the repository root, build HTML and PDF with:
+
+make docs
+
+Other documentation targets:
+
+make docs-html    # doc/nrlsmf.html only
+make docs-pdf     # doc/nrlsmf.pdf only
+make clean-docs   # remove generated doc outputs
+
+Documentation dependencies (Debian/Ubuntu):
+
+sudo apt install xsltproc docbook-xml docbook-xsl dblatex
+
+Documentation dependencies (Fedora/RHEL):
+
+sudo dnf install libxslt docbook-style-xsl docbook-dtds dblatex
+
+To verify that the required tools and DocBook stylesheet paths are found:
+
+make -C doc check-tools
+
+See doc/nrlsmf.html or doc/nrlsmf.pdf for further instructions.
