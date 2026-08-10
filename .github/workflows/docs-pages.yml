@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            make xsltproc docbook-xml docbook-xsl
+            make xsltproc docbook-xml docbook-xsl dblatex
 
       - name: Build GitHub Pages site
         run: make docs-site

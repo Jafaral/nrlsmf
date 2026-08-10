@@ -3,7 +3,7 @@
 # Outputs:
 #   nrlsmf.html  - single-file HTML (DocBook XSL)
 #   nrlsmf.pdf   - PDF via dblatex when available
-#   site/        - GitHub Pages bundle (index.html + resources/)
+#   site/        - GitHub Pages bundle (index.html, nrlsmf.pdf, resources/)
 #
 # Typical packages (Debian/Ubuntu):
 #   sudo apt install xsltproc docbook-xml docbook-xsl dblatex
@@ -35,10 +35,11 @@ html: $(HTML_OUT)
 
 pdf: $(PDF_OUT)
 
-pages: html
+pages: html pdf
 	rm -rf $(SITE_DIR)
 	mkdir -p $(SITE_DIR)/resources
 	cp $(HTML_OUT) $(SITE_DIR)/index.html
+	cp $(PDF_OUT) $(SITE_DIR)/$(PDF_OUT)
 	cp -r resources/. $(SITE_DIR)/resources/
 
 $(HTML_OUT): $(SOURCE)

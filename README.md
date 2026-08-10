@@ -81,13 +81,14 @@ To verify that the required tools and DocBook stylesheet paths are found:
 
 make -C doc check-tools
 
-Build a GitHub Pages bundle locally (doc/site/index.html plus resources/):
+Build a GitHub Pages bundle locally (doc/site/index.html, nrlsmf.pdf, and resources/):
 
 make docs-site
 
 After merging to the default branch and enabling GitHub Pages (Settings >
 Pages > Build and deployment > GitHub Actions), the User's Guide is published
-automatically by the "Deploy documentation" workflow. The site URL will be
-shown on the workflow run and in the repository Pages settings.
+automatically by the "Deploy documentation" workflow. The HTML page includes
+a link to download the PDF, which is built and published alongside the HTML.
 
-See doc/nrlsmf.html or doc/nrlsmf.pdf for further instructions.
+See doc/nrlsmf.html or doc/nrlsmf.pdf for a local copy after running make docs,
+or the published GitHub Pages site after merge.
