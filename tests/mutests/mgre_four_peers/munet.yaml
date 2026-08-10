@@ -1,0 +1,40 @@
+# Four mGRE peers with a hub router between underlay LANs.
+#
+#   p1 -- lan1 --\
+#   p2 -- lan2 ---\
+#                  r0
+#   p3 -- lan3 ---/
+#   p4 -- lan4 --/
+#
+# Underlay: static/connected routes via r0.
+# Overlay:  multipoint GRE (remote any) + NBMA neighbors; nrlsmf CF on gre0.
+topology:
+  networks:
+    - name: lan1
+    - name: lan2
+    - name: lan3
+    - name: lan4
+  nodes:
+    - name: r0
+      kind: frr
+      connections:
+        - to: lan1
+        - to: lan2
+        - to: lan3
+        - to: lan4
+    - name: p1
+      kind: frr
+      connections:
+        - to: lan1
+    - name: p2
+      kind: frr
+      connections:
+        - to: lan2
+    - name: p3
+      kind: frr
+      connections:
+        - to: lan3
+    - name: p4
+      kind: frr
+      connections:
+        - to: lan4

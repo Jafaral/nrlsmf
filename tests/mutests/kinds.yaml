@@ -1,6 +1,8 @@
 kinds:
   - name: frr
     cap-add:
+      - NET_ADMIN
+      - NET_RAW
       - SYS_ADMIN
       - AUDIT_WRITE
     cmd: |
