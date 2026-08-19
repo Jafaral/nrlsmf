@@ -9,9 +9,17 @@ This directory is the home for new munet-based tests.
 ```bash
 pip install munet
 ```
-- To run the tests, chnage to the tests/mutests directory and run mutest:
+
+- To run the tests, change to the `tests/mutests` directory and run mutest:
 
 ```bash
 cd tests/mutests
 sudo mutest
+```
+
+- To run a single suite:
+
+```bash
+sudo mutest mgre_four_peers
+sudo mutest 1hop_smf
 ```
