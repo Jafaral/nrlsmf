@@ -99,6 +99,29 @@ jobs:
       - name: Build nrlsmf
         run: make -C makefiles -f Makefile.linux
 
+  build-docs:
+    name: Build (Documentation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install documentation dependencies
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            make xsltproc docbook-xml docbook-xsl dblatex
+
+      - name: Build documentation
+        run: make docs
+
+      - name: Verify documentation outputs
+        run: |
+          test -s doc/nrlsmf.html
+          test -s doc/nrlsmf.pdf
+
   build-windows:
     name: Build (Windows)
     runs-on: windows-latest

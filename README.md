@@ -56,5 +56,39 @@ nrlsmf.exe for WinCE platforms including the required
 Rawether libraries).  A workspace (nrlsmf.vcw) and project
 files are provided for the Embedded Visual C++ compiler.
 
-See the "nrlsmf.html" or "nrlsmf.pdf" file for further
-instructions.
+Documentation
+
+The nrlsmf User's Guide source is in doc/nrlsmf.xml (DocBook XML).
+From the repository root, build HTML and PDF with:
+
+make docs
+
+Other documentation targets:
+
+make docs-html    # doc/nrlsmf.html only
+make docs-pdf     # doc/nrlsmf.pdf only
+make clean-docs   # remove generated doc outputs
+
+Documentation dependencies (Debian/Ubuntu):
+
+sudo apt install xsltproc docbook-xml docbook-xsl dblatex
+
+Documentation dependencies (Fedora/RHEL):
+
+sudo dnf install libxslt docbook-style-xsl docbook-dtds dblatex
+
+To verify that the required tools and DocBook stylesheet paths are found:
+
+make -C doc check-tools
+
+Build a GitHub Pages bundle locally (doc/site/index.html, nrlsmf.pdf, and resources/):
+
+make docs-site
+
+After merging to the default branch and enabling GitHub Pages (Settings >
+Pages > Build and deployment > GitHub Actions), the User's Guide is published
+automatically by the "Deploy documentation" workflow. The HTML page includes
+a link to download the PDF, which is built and published alongside the HTML.
+
+See doc/nrlsmf.html or doc/nrlsmf.pdf for a local copy after running make docs,
+or the published GitHub Pages site after merge.
