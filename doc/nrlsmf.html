@@ -1,5 +1,7 @@
-<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>nrlsmf User's Guide</title><meta name="generator" content="DocBook XSL Stylesheets Vsnapshot"><meta name="description" content="The NRL Simplified Multicast Forwarding (nrlsmf) project includes software for a user-space IP Multicast forwarding engine. This software was developed by the Naval Research Laboratory (NRL) PROTocol Engineering Advanced Networking (PROTEAN) Research Group. The goal of this effort is to provide an implementation of experimental techniques for robust, efficient distribution of IP Multicast packets in dynamic, wireless networks such as Mobile Ad-hoc Networks (MANETs). A PDF version is available for download: nrlsmf User's Guide (PDF)."></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="article"><div class="titlepage"><div><div><h2 class="title"><a name="id1337"></a><span class="inlinemediaobject"><img src="resources/smfLogo.png" align="left"></span> <span class="emphasis"><em>nrlsmf</em></span> User's
-    Guide<span class="inlinemediaobject"><img src="resources/ProteanLogo.png" align="right" width="162"></span></h2></div><div><div class="abstract"><p class="title"><b>Abstract</b></p><p>The NRL Simplified Multicast Forwarding
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1"><title>nrlsmf User's Guide</title><meta name="generator" content="DocBook XSL Stylesheets Vsnapshot"><meta name="description" content=" The NRL Simplified Multicast Forwarding (nrlsmf) project includes software for a user-space IP Multicast forwarding engine. This software was developed by the Naval Research Laboratory (NRL) PROTocol Engineering Advanced Networking (PROTEAN) Research Group. The goal of this effort is to provide an implementation of experimental techniques for robust, efficient distribution of IP Multicast packets in dynamic, wireless networks such as Mobile Ad-hoc Networks (MANETs). A PDF version is available for download: nrlsmf User's Guide (PDF)."></head><body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF"><div class="article"><div class="titlepage"><div><div><h2 class="title"><a name="id1337"></a><span class="emphasis"><em>nrlsmf</em></span> User's Guide</h2></div><div><div class="abstract"><p class="title"><b>Abstract</b></p><p>
+        <span class="inlinemediaobject"><img src="resources/smfLogo.png" align="left" width="270"></span>
+        <span class="inlinemediaobject"><img src="resources/ProteanLogo.png" align="right" width="162"></span>
+      </p><p>The NRL Simplified Multicast Forwarding
       (<span class="application">nrlsmf</span>) project includes software for a
       user-space IP Multicast forwarding engine. This software was developed
       by the <a class="ulink" href="http://www.nrl.navy.mil/" target="_top">Naval Research
@@ -184,7 +186,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
     planned. A nice aspect of the JSON configuration is that its structure
     helps illustrate the relationship of various
     <span class="application">nrlsmf</span> configuration elements including global
-    attritibute, interface groups, and per-interface attributes.</p><div class="table"><a name="id1489"></a><p class="title"><b>Table 1. Operating Mode Commands</b></p><div class="table-contents"><table class="table" summary="Operating Mode Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td align="left"><code class="literal">load
+    attritibute, interface groups, and per-interface attributes.</p><div class="table"><a name="id1490"></a><p class="title"><b>Table 1. Operating Mode Commands</b></p><div class="table-contents"><table class="table" summary="Operating Mode Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td align="left"><code class="literal">load
             &lt;filename.json&gt;</code></td><td>Load an <span class="application">nrlsmf</span> JSON
             configuration file using the specified
             <em class="parameter"><code>&lt;filename.json&gt;</code></em>.</td></tr><tr><td align="left"><code class="literal">save
@@ -353,7 +355,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
     configured. The "<code class="literal">resequence</code>" command listed here should
     be used to ensure that packets generated are properly labeled using the
     IPv4 ID field or the IPv6 SMF_DPD header option for SMF duplicate packet
-    detection.</p><div class="table"><a name="id1673"></a><p class="title"><b>Table 2. Interface (and Interface Group) Commands</b></p><div class="table-contents"><table class="table" summary="Interface (and Interface Group) Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">add
+    detection.</p><div class="table"><a name="id1674"></a><p class="title"><b>Table 2. Interface (and Interface Group) Commands</b></p><div class="table-contents"><table class="table" summary="Interface (and Interface Group) Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">add
             [&lt;ifaceGroup&gt;,]{cf|smpr|ecds|...},&lt;ifaceList&gt;</code></td><td>Creates a new interface group or adds interfaces to an
             existing one and configures the interface group for a specific
             relay algorithm (e.g., <code class="literal">cf</code>,
@@ -531,7 +533,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
     duplicate packet detection, flow detection and timeout) to streamline the
     code and its performance. Some aspects of Elastic Multicast design are
     still in progress informed by limited deployment and experimentation
-    activities.</p><div class="table"><a name="id1812"></a><p class="title"><b>Table 3. Elastic Multicast Commands</b></p><div class="table-contents"><table class="table" summary="Elastic Multicast Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">elastic &lt;ifaceGroup&gt;</code></td><td>Enables Elastic Multicast routing instead of basic SMF
+    activities.</p><div class="table"><a name="id1813"></a><p class="title"><b>Table 3. Elastic Multicast Commands</b></p><div class="table-contents"><table class="table" summary="Elastic Multicast Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">elastic &lt;ifaceGroup&gt;</code></td><td>Enables Elastic Multicast routing instead of basic SMF
             flooding for the given &lt;<em class="parameter"><code>ifaceGroup</code></em>&gt;.
             IMPORTANT - note that <span class="command"><strong>nrlsmf</strong></span> is currently
             limited to providing proper Elastic Multicast routing on a single
@@ -636,7 +638,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
     The <span class="application">nrlsmf</span> application has some logic in its
     command-parsing to avoid some of these scenarios, but the flexibility
     allowed permits some configurations that may produce undesirable
-    effects.</p><div class="table"><a name="id1886"></a><p class="title"><b>Table 4. Gateway Commands</b></p><div class="table-contents"><table class="table" summary="Gateway Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">push
+    effects.</p><div class="table"><a name="id1887"></a><p class="title"><b>Table 4. Gateway Commands</b></p><div class="table-contents"><table class="table" summary="Gateway Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">push
             &lt;srcIface&gt;,&lt;dstIfaceList&gt;</code></td><td>Force relay of packets from
             &lt;<code class="literal">srcIface</code>&gt; to listed destination
             interfaces. The <code class="literal">&lt;dstIfaceList&gt;</code> is a
@@ -699,7 +701,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
       used to identify the correct interface for elastic control messages
       (for example, EM_ACK). JSON configuration file support for GRE tunnel
       mapping is not yet available; use command-line or run-time remote
-      control commands instead.</p><div class="table"><a name="id1930"></a><p class="title"><b>Table 5. GRE Tunnel Commands</b></p><div class="table-contents"><table class="table" summary="GRE Tunnel Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">map
+      control commands instead.</p><div class="table"><a name="id1931"></a><p class="title"><b>Table 5. GRE Tunnel Commands</b></p><div class="table-contents"><table class="table" summary="GRE Tunnel Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">map
               &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</code></td><td>Associate tunnel endpoint address information with
               &lt;<code class="literal">iface</code>&gt;. If
               &lt;<code class="literal">remoteAddr</code>&gt; is omitted or invalid, the
@@ -726,7 +728,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
        ujoin 239.1.1.1,eth0</pre></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="VirtualInterfaces"></a>Virtual Interface Commands</h3></div></div></div><p>SMF supports virtual interface constructs that associate a
       user-space forwarding path with one or more underlying physical
       interfaces. These are commonly used for host integration, composite
-      devices, and encapsulation.</p><div class="table"><a name="id1969"></a><p class="title"><b>Table 6. Virtual Interface Commands</b></p><div class="table-contents"><table class="table" summary="Virtual Interface Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">device
+      devices, and encapsulation.</p><div class="table"><a name="id1970"></a><p class="title"><b>Table 6. Virtual Interface Commands</b></p><div class="table-contents"><table class="table" summary="Virtual Interface Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">device
               &lt;vifName&gt;,&lt;ifaceName&gt;[/{t|r|d}][,&lt;addr&gt;...]</code></td><td>Create a virtual SMF interface (vif) associated with one
               or more physical interfaces. Optional flags on
               &lt;<code class="literal">ifaceName</code>&gt; are
@@ -741,14 +743,14 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
               device operation. (default = on)</td></tr><tr><td><code class="literal">route
               &lt;dstAddr&gt;,&lt;nextHopAddr&gt;</code></td><td>Add a debug route used with encapsulation testing.</td></tr></tbody></table></div></div><br class="table-break"></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="VrfFrr"></a>VRF and FRR Integration</h3></div></div></div><p><span class="application">nrlsmf</span> can associate interfaces with named
       virtual routing and forwarding (VRF) contexts. When run alongside FRR,
-      VRF information may be imported at startup.</p><div class="table"><a name="id2011"></a><p class="title"><b>Table 7. VRF Commands</b></p><div class="table-contents"><table class="table" summary="VRF Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">vrf
+      VRF information may be imported at startup.</p><div class="table"><a name="id2012"></a><p class="title"><b>Table 7. VRF Commands</b></p><div class="table-contents"><table class="table" summary="VRF Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">vrf
               &lt;vrf-name&gt;,[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</code></td><td>Associate one or more interfaces with the named VRF. An
               optional numeric VRF identifier may be supplied.</td></tr><tr><td><code class="literal">with-frr</code></td><td>Run alongside FRR and pull configuration where appropriate,
               such as VRF information. This option must appear early on the
               command line.</td></tr></tbody></table></div></div><br class="table-break"></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="JsonConfig"></a>JSON Configuration</h3></div></div></div><p><span class="application">nrlsmf</span> supports loading and saving
       configuration in JSON format. Some advanced options (including GRE tunnel
       mapping) are not yet available via JSON and must be configured using
-      command-line or remote control commands.</p><div class="table"><a name="id2029"></a><p class="title"><b>Table 8. Configuration Commands</b></p><div class="table-contents"><table class="table" summary="Configuration Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">load &lt;configFile&gt;</code></td><td>Load an nrlsmf JSON configuration file at startup or at
+      command-line or remote control commands.</p><div class="table"><a name="id2030"></a><p class="title"><b>Table 8. Configuration Commands</b></p><div class="table-contents"><table class="table" summary="Configuration Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">load &lt;configFile&gt;</code></td><td>Load an nrlsmf JSON configuration file at startup or at
               run-time.</td></tr><tr><td><code class="literal">save &lt;configFile&gt;</code></td><td>Save the current configuration to a JSON file, typically
               upon exit.</td></tr><tr><td><code class="literal">stats</code></td><td>Return interface and group information via the remote
               control interface.</td></tr></tbody></table></div></div><br class="table-break"></div><p>The "Remote-only Commands" listed here can be invoked only via the
@@ -764,7 +766,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
     list. The "selectorMac" and "neighborMac" apply to control of S-MPR
     forwarding. The "mneBlockMac" command is provided to support proper SMF
     behavior in the <a class="ulink" href="http://cs.itd.nrl.navy.mil/products" target="_top">NRL
-    Mobile Network Emulation (MNE)</a> environment.</p><div class="table"><a name="id2053"></a><p class="title"><b>Table 9. Remote-only Commands</b></p><div class="table-contents"><table class="table" summary="Remote-only Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">selectorMac &lt;binary
+    Mobile Network Emulation (MNE)</a> environment.</p><div class="table"><a name="id2054"></a><p class="title"><b>Table 9. Remote-only Commands</b></p><div class="table-contents"><table class="table" summary="Remote-only Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">selectorMac &lt;binary
               macAddrArray&gt;</code></td><td>This command can be used by external processes (e.g.,
               <span class="application">nrlolsrd</span>) to control
               <span class="application">nrlsmf</span> S-MPR forwarding. This command

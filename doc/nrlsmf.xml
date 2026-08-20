@@ -4,21 +4,24 @@
 "http://www.oasis-open.org/docbook/xml/4.1/docbookx.dtd">
 <article>
   <articleinfo>
-    <title><inlinemediaobject>
-        <imageobject>
-          <imagedata align="left" fileref="resources/smfLogo.png" scale="100"/>
-        </imageobject>
-      </inlinemediaobject> <emphasis>nrlsmf</emphasis> User's
-    Guide<inlinemediaobject>
-        <imageobject>
-          <imagedata align="right" fileref="resources/ProteanLogo.png"
-                     scale="30"/>
-        </imageobject>
-      </inlinemediaobject></title>
+    <title><emphasis>nrlsmf</emphasis> User's Guide</title>
 
     <titleabbrev><emphasis>nrlsmf</emphasis> User's Guide</titleabbrev>
 
     <abstract>
+      <para>
+        <inlinemediaobject>
+          <imageobject>
+            <imagedata align="left" fileref="resources/smfLogo.png" scale="50"/>
+          </imageobject>
+        </inlinemediaobject>
+        <inlinemediaobject>
+          <imageobject>
+            <imagedata align="right" fileref="resources/ProteanLogo.png" scale="30"/>
+          </imageobject>
+        </inlinemediaobject>
+      </para>
+
       <para>The NRL Simplified Multicast Forwarding
       (<application>nrlsmf</application>) project includes software for a
       user-space IP Multicast forwarding engine. This software was developed

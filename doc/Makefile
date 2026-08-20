@@ -56,7 +56,7 @@ $(PDF_OUT): $(SOURCE)
 	@test -x "$$(command -v $(DBLATEX) 2>/dev/null)" || ( \
 		echo "error: $(DBLATEX) not found (install dblatex for PDF output)" >&2; \
 		exit 1)
-	$(DBLATEX) -o $@ $<
+	$(DBLATEX) -P table.in.float=0 -o $@ $<
 
 clean:
 	rm -rf $(SITE_DIR)
