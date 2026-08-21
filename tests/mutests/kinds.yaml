@@ -1,4 +1,8 @@
 kinds:
+  - name: host
+    cap-add:
+      - NET_ADMIN
+      - NET_RAW
   - name: frr
     cap-add:
       - NET_ADMIN

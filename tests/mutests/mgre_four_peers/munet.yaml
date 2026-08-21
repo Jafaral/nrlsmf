@@ -1,40 +1,75 @@
-# Four mGRE peers with a hub router between underlay LANs.
+# Four GRE/mGRE routers with an underlay router between the LANs,
+# plus an application host off each SMF router.
 #
-#   p1 -- lan1 --\
-#   p2 -- lan2 ---\
-#                  r0
-#   p3 -- lan3 ---/
-#   p4 -- lan4 --/
+#        h0 -- r0 -- lan0 --\
+#        h1 -- r1 -- lan1 ---\
+#                             u0
+#        h2 -- r2 -- lan2 ---/
+#        h3 -- r3 -- lan3 --/
 #
-# Underlay: static/connected routes via r0.
-# Overlay:  multipoint GRE (remote any) + NBMA neighbors; nrlsmf CF on gre0.
+# u0 is the "underlay" node: it does no GRE/nrlsmf overlay work of its
+# own (except in the multicast-underlay test, where it acts purely as a
+# multicast dataplane relay between the LANs). It exists only to route
+# ordinary IP traffic between r0..r3, standing in for "the WAN" that a
+# real GRE/mGRE deployment would tunnel across.
+#
+# r0..r3 build GRE/mGRE tunnels and run nrlsmf. Application multicast
+# is sourced on host h0 and received on h1/h2/h3 so nrlsmf CF is both
+# the first hop onto the overlay and the last hop off it — not a
+# locally generated send or receive on the tunnel.
+# Each test reuses this topology and only changes what r0..r3 (and
+# sometimes u0) do on top of it.
 topology:
   networks:
+    - name: lan0
     - name: lan1
     - name: lan2
     - name: lan3
-    - name: lan4
+    - name: lanh0
+    - name: lanh1
+    - name: lanh2
+    - name: lanh3
   nodes:
+    - name: u0
+      kind: frr
+      connections:
+        - to: lan0
+        - to: lan1
+        - to: lan2
+        - to: lan3
+    - name: h0
+      kind: host
+      connections:
+        - to: lanh0
+    - name: h1
+      kind: host
+      connections:
+        - to: lanh1
+    - name: h2
+      kind: host
+      connections:
+        - to: lanh2
+    - name: h3
+      kind: host
+      connections:
+        - to: lanh3
     - name: r0
       kind: frr
       connections:
-        - to: lan1
-        - to: lan2
-        - to: lan3
-        - to: lan4
-    - name: p1
+        - to: lan0
+        - to: lanh0
+    - name: r1
       kind: frr
       connections:
         - to: lan1
-    - name: p2
+        - to: lanh1
+    - name: r2
       kind: frr
       connections:
         - to: lan2
-    - name: p3
+        - to: lanh2
+    - name: r3
       kind: frr
       connections:
         - to: lan3
-    - name: p4
-      kind: frr
-      connections:
-        - to: lan4
+        - to: lanh3
