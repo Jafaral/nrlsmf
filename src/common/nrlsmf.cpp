@@ -240,7 +240,7 @@ class SmfApp : public ProtoApp
         class InterfaceMechanism : public Smf::Interface::Extension
         {
             public:
-                InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool);
+                InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool, Smf& theSmf);
                 ~InterfaceMechanism();
 
                 Smf::Interface& GetInterface() {return smf_iface;}
@@ -283,6 +283,7 @@ class SmfApp : public ProtoApp
 
                 enum TxStatus {TX_OK, TX_BLOCK,TX_ERROR};
                 TxStatus SendFrame(char* frame, unsigned int frameLen);
+                bool SendGrePayload(ProtoCap& cap, char* frame, unsigned int frameLength, unsigned int& numBytes);
 
 
                 void ResetTxIterator() {tx_iterator.Reset();}
@@ -307,6 +308,7 @@ class SmfApp : public ProtoApp
             private:
                 Smf::Interface&             smf_iface;
                 SmfPacket::Pool&            pkt_pool;
+                Smf&                        smf;
                 ProtoVif*                   proto_vif;
                 bool                        is_shadowing;
                 bool                        block_igmp;
@@ -455,8 +457,8 @@ class SmfApp : public ProtoApp
 
 const unsigned int SmfApp::BUFFER_MAX = FRAME_SIZE_MAX + 2 + (256 *sizeof(UINT32));
 
-SmfApp::InterfaceMechanism::InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool)
- : smf_iface(iface), pkt_pool(pktPool), proto_vif(NULL), is_shadowing(false), block_igmp(false),
+SmfApp::InterfaceMechanism::InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool, Smf& theSmf)
+ : smf_iface(iface), pkt_pool(pktPool), smf(theSmf), proto_vif(NULL), is_shadowing(false), block_igmp(false),
    cid_list_length(0), cid_mirror(true), tx_iterator(cid_list), output_notification(false),
 #ifdef _PROTO_DETOUR
    proto_detour(NULL),
@@ -650,6 +652,48 @@ SmfApp::CidElement* SmfApp::InterfaceMechanism::GetNextTxElement(bool autoReset)
     return elem;
 }  // end  SmfApp::InterfaceMechanism::GetNetTxElement()
 
+bool SmfApp::InterfaceMechanism::SendGrePayload(ProtoCap& cap, char* frame, unsigned int frameLength, unsigned int& numBytes)
+{
+    // GRE inject is inner IP only. A wildcard-remote mGRE interface has no
+    // single kernel dest; overlay multicast is sent once per unicast remote
+    // recorded in Smf::InterfaceInfoTable (typically via multiple map commands).
+    numBytes = frameLength - 14;
+    char* payload = frame + 14;
+    const bool overlayMcast = (0 != (0x01 & ((UINT8)frame[0])));
+    ProtoAddressList dests;
+    if (overlayMcast)
+        smf.GetTunnelUnicastRemotes(smf_iface.GetIndex(), dests);
+    if (dests.IsEmpty())
+        return cap.Send(payload, numBytes);
+
+    ProtoAddress saved = cap.GetTunnelRemoteAddr();
+    bool success = false;
+    unsigned int sentBytes = 0;
+    ProtoAddressList::Iterator it(dests);
+    ProtoAddress peer;
+    while (it.GetNextAddress(peer))
+    {
+        unsigned int n = frameLength - 14;
+        cap.SetTunnelRemoteAddr(peer);
+        bool ok = cap.Send(payload, n);
+        if (0 == n)
+            ok = false;
+        if (ok)
+        {
+            success = true;
+            sentBytes = n;
+        }
+        else
+        {
+            PLOG(PL_WARN, "SendGrePayload() failed via %s dest %s\n",
+                 smf_iface.GetNameStr(), peer.GetHostString());
+        }
+    }
+    cap.SetTunnelRemoteAddr(saved);
+    numBytes = success ? sentBytes : 0;
+    return success;
+}  // end SmfApp::InterfaceMechanism::SendGrePayload()
+
 SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char* frame, unsigned int frameLength)
 {
     bool success = false;
@@ -665,9 +709,7 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
         }
         else if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
         {
-            // Just send the IP payload portion
-            numBytes -= 14;
-            success = elem->GetProtoCap().Send(frame + 14, numBytes);
+            success = SendGrePayload(elem->GetProtoCap(), frame, frameLength, numBytes);
         }
         else if ((NULL != proto_vif) && !is_shadowing)
         {
@@ -697,8 +739,7 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
                 bool mirrorSuccess;
                 if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
                 {
-                    numBytes -= 14;
-                    mirrorSuccess = elem->GetProtoCap().Send(frame + 14, numBytes);
+                    mirrorSuccess = SendGrePayload(elem->GetProtoCap(), frame, frameLength, numBytes);
                 }
                 else if (is_shadowing)
                 {
@@ -730,8 +771,7 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
                 numBytes = frameLength;
                 if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
                 {
-                    numBytes -= 14;
-                    success = elem->GetProtoCap().Send(frame + 14, numBytes);
+                    success = SendGrePayload(elem->GetProtoCap(), frame, frameLength, numBytes);
                 }
                 else if (is_shadowing)
                 {
@@ -1112,7 +1152,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+leave",           "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
     "+load",            "<configFile>   : load nrlsmf JSON configuration file",
     "+log",             "<logFile>      : debug log file",
-    "+map",             "<iface>,<localAddr>[,<remoteAddr>] : maps tunnel endpoint information for a GRE interface (or other ancillary iface->address assocation)",
+    "+map",             "<iface>,<localAddr>[,<remoteAddr>] : maps tunnel endpoint information (repeat per mGRE unicast peer for overlay multicast inject)",
     "+merge",           "<ifaceList>  : forward _among_ all iface's listed",
     "+push",            "<srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed",
     "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
@@ -3093,7 +3133,8 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         {
             if (remoteAddr.IsValid())
             {
-                // It's a tunnel interface mapping
+                // Multiple map commands with different remotes record multiple
+                // peers (mGRE overlay multicast inject destinations).
                 iface->SetTunnelLocalAddress(localAddr);
                 iface->SetTunnelRemoteAddress(remoteAddr);
                 if (!smf.AddTunnelInfo(iface->GetIndex(), localAddr, remoteAddr))
@@ -3110,8 +3151,6 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         }
         else if (remoteAddr.IsValid())
         {
-            iface->SetTunnelLocalAddress(PROTO_ADDR_NONE);
-            iface->SetTunnelRemoteAddress(PROTO_ADDR_NONE);
             smf.RemoveTunnelInfo(localAddr, remoteAddr);
         }
         else
@@ -4471,7 +4510,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
     if (NULL == mech)
     {
-        if (NULL == (mech = new InterfaceMechanism(*iface, pkt_pool)))
+        if (NULL == (mech = new InterfaceMechanism(*iface, pkt_pool, smf)))
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): new InterfaceMechanism error: %s\n", GetErrorString());
             smf.RemoveInterface(ifIndex);
@@ -5474,7 +5513,7 @@ Smf::Interface* SmfApp::CreateDevice(const char* vifName)
     }
 
     // Create InterfaceMechanism to associate vif device
-    InterfaceMechanism* mech = new InterfaceMechanism(*iface, pkt_pool);
+    InterfaceMechanism* mech = new InterfaceMechanism(*iface, pkt_pool, smf);
     if (NULL == mech)
     {
         PLOG(PL_ERROR, "SmfApp::CreateDevice() new InterfaceMechanism error: %s\n", GetErrorString());

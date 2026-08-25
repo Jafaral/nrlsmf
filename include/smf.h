@@ -117,6 +117,7 @@ class Smf
                     if (NULL != remoteAddr)
                     {
                         // remoteAddr is first in key for FindTunnelInfo() for mGRE to work
+                        remote_addr = *remoteAddr;
                         len = remoteAddr->GetLength();
                         memcpy(address_info_key, remoteAddr->GetRawHostAddress(), len);
                     }
@@ -181,10 +182,12 @@ class Smf
                     {return Find(addr.GetRawHostAddress(), 8*addr.GetLength());}
                 InterfaceInfo* FindInfo(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
                 {
+                    // Must match InterfaceInfo key order: [remoteAddr][localAddr]
                     char addrInfo[16 + 16];
-                    memcpy(addrInfo, localAddr.GetRawHostAddress(), localAddr.GetLength());
-                    memcpy(addrInfo+localAddr.GetLength(), remoteAddr.GetRawHostAddress(), remoteAddr.GetLength());
-                    return Find(addrInfo, 8*(localAddr.GetLength() + remoteAddr.GetLength()));
+                    unsigned int len = remoteAddr.GetLength();
+                    memcpy(addrInfo, remoteAddr.GetRawHostAddress(), len);
+                    memcpy(addrInfo + len, localAddr.GetRawHostAddress(), localAddr.GetLength());
+                    return Find(addrInfo, 8*(len + localAddr.GetLength()));
                 }
                 unsigned int GetIndex(const ProtoAddress& addr) const
                 {
@@ -331,6 +334,22 @@ class Smf
 
         InterfaceInfoTable& AccessInterfaceInfoTable()
             {return iface_info_table;}
+
+        // Unicast remotes from map (and P2P auto-discover). Used as GRE
+        // inject destinations for overlay multicast; skip 0.0.0.0 / mcast.
+        void GetTunnelUnicastRemotes(unsigned int ifaceIndex, ProtoAddressList& dests)
+        {
+            InterfaceInfoTable::Iterator iterator(iface_info_table);
+            InterfaceInfo* info;
+            while (NULL != (info = iterator.GetNextItem()))
+            {
+                if (info->GetIndex() != ifaceIndex)
+                    continue;
+                const ProtoAddress& remote = info->GetRemoteAddress();
+                if (remote.IsValid() && remote.IsUnicast())
+                    dests.Insert(remote);
+            }
+        }
 
         UINT16 GetIPv4LocalSequence(const ProtoAddress* dstAddr,
                                     const ProtoAddress* srcAddr = NULL)
