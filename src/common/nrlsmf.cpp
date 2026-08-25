@@ -6921,8 +6921,8 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
             if (ProtoNet::IFACE_GRE == cap.GetInterfaceType())
             {
                 // Create placeholder Ethernet header for packet received via GRE tunnel
-                // Note the src/dst MAC addresses will be null for now
-                // Note HandleInboundPacket() will populate Ethernet src/dst header fields later as needed
+                // src/dst MAC are null here; HandleInboundPacket() sets the dest
+                // for overlay multicast from the inner IP destination.
                 ProtoPktETH ethPkt;
                 ethPkt.InitIntoBuffer(ethBuffer, 14);
                 ethPkt.SetType(ProtoPktETH::IP);
@@ -7319,6 +7319,17 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
         }
         if (dstAddr.IsUnicast()) isUnicast = true;
 
+        // GRE receive builds a placeholder Ethernet header with a null dest.
+        // Forwarding onto a real LAN needs the IP-mapped multicast MAC (01:00:5e:... /
+        // 33:33:...), not 00:00:00:00:00:00. ProtoCap::Forward() only rewrites src.
+        if (srcCapIsGRE && !isUnicast)
+        {
+            ProtoAddress ethDst;
+            ethDst.GetEthernetMulticastAddress(dstAddr);
+            if (ethDst.IsValid())
+                ethPkt.SetDstAddr(ethDst);
+        }
+
         // Some IGMP snooping test code (TBD - handle IPv6 too)
         bool igmpSnoop = false;
         if (igmpSnoop && (ProtoPktIP::IGMP == protocol))
@@ -7397,12 +7408,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
                 // doesn't seem to be necessary to fix
                 ethPkt.SetDstAddr(vif->GetHardwareAddress());
             }
-            else
-            {
-                // Fix ETH dstMacAddr for multicast
-                dstMacAddr.GetEthernetMulticastAddress(dstAddr);
-                ethPkt.SetDstAddr(dstMacAddr);
-            }
+            // else: multicast dest already set from the GRE overlay IP dest above
         }
         else
         {
