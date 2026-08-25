@@ -346,9 +346,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
       <title>Operating Mode Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*"/>
+        <colspec colname="Command" colwidth="1.5*"/>
 
-        <colspec colname="Description" colwidth="2.5*"/>
+        <colspec colname="Description" colwidth="2*"/>
 
         <tbody>
           <row>
@@ -389,7 +389,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>hash {MD5 | CRC32 | SHA1 | NONE}</literal></entry>
+            <entry><literal>hash</literal>
+            <sbr/><literal>{MD5 | CRC32 | SHA1 | NONE}</literal></entry>
 
             <entry>When I-DPD is disabled ("<literal>idpd off</literal>") and
             a hashing algorithm is enabled via this command (i.e.,
@@ -415,8 +416,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>ihash {MD5 | CRC32 | SHA1 |
-            NONE}</literal></entry>
+            <entry><literal>ihash</literal>
+            <sbr/><literal>{MD5 | CRC32 | SHA1 | NONE}</literal></entry>
 
             <entry>This command is similar to the "<literal>hash</literal>"
             command described above in that a hashing
@@ -617,8 +618,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>dscpCapture
-            &lt;dscpValue&gt;,&lt;dscpValueList&gt;</literal></entry>
+            <entry><literal>dscpCapture</literal>
+            <sbr/><literal>&lt;dscpValue&gt;,&lt;dscpValueList&gt;</literal></entry>
 
             <entry>Specify a list of DSCP values for unicast packets that will
             be intercepted by <application>nrlsmf</application>. This command
@@ -658,8 +659,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>vrf
-            &lt;vrf-name&gt;,[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</literal></entry>
+            <entry><literal>vrf</literal>
+            <sbr/><literal>&lt;vrf-name&gt;,</literal>
+            <sbr/><literal>[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</literal></entry>
 
             <entry>Associate list of interfaces with a VRF.</entry>
           </row>
@@ -680,14 +682,16 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
       <title>Interface (and Interface Group) Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*"/>
+        <colspec colname="Command" colwidth="1.5*"/>
 
-        <colspec colname="Description" colwidth="2.5*"/>
+        <colspec colname="Description" colwidth="2*"/>
 
         <tbody>
           <row>
-            <entry><literal>add
-            [&lt;ifaceGroup&gt;,]{cf|smpr|ecds|...},&lt;ifaceList&gt;</literal></entry>
+            <entry><literal>add</literal>
+            <sbr/><literal>[&lt;ifaceGroup&gt;,]</literal>
+            <sbr/><literal>{cf|smpr|ecds|...},</literal>
+            <sbr/><literal>&lt;ifaceList&gt;</literal></entry>
 
             <entry>Creates a new interface group or adds interfaces to an
             existing one and configures the interface group for a specific
@@ -710,8 +714,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>remove
-            &lt;ifaceGroup&gt;,[&lt;iface1&gt;[,&lt;iface2&gt;,...]]</literal></entry>
+            <entry><literal>remove</literal>
+            <sbr/><literal>&lt;ifaceGroup&gt;,</literal>
+            <sbr/><literal>[&lt;iface1&gt;[,&lt;iface2&gt;,...]]</literal></entry>
 
             <entry>Removes either an entire
             <literal>&lt;ifaceGroup&gt;</literal> or the given
@@ -796,8 +801,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>allow [vrf,&lt;srcVRF&gt;,&lt;dstVRF&gt;,]{all |
-            &lt;addr1&gt;[,&lt;addr2&gt;,...]}</literal></entry>
+            <entry><literal>allow</literal>
+            <sbr/><literal>[vrf,&lt;srcVRF&gt;,&lt;dstVRF&gt;,]</literal>
+            <sbr/><literal>{all | &lt;addr1&gt;[,&lt;addr2&gt;,...]}</literal></entry>
 
             <entry>Sets a forwarding policy to allow either specific Virtual
             Routing and Forwarding (VRF) groups with specific destination
@@ -814,8 +820,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>deny [vrf,&lt;srcVRF&gt;,&lt;dstVRF&gt;,]{all |
-            &lt;addr1&gt;[,&lt;addr2&gt;,...]}</literal></entry>
+            <entry><literal>deny</literal>
+            <sbr/><literal>[vrf,&lt;srcVRF&gt;,&lt;dstVRF&gt;,]</literal>
+            <sbr/><literal>{all | &lt;addr1&gt;[,&lt;addr2&gt;,...]}</literal></entry>
 
             <entry>Sets a forwarding policy to deny (block) destinations from
             forwarding within either specific Virtual Routing and Forwarding
@@ -830,9 +837,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>device
-            &lt;vifName&gt;,&lt;ifaceName&gt;[,&lt;addrList
-            ...&gt;]</literal></entry>
+            <entry><literal>device</literal>
+            <sbr/><literal>&lt;vifName&gt;,&lt;ifaceName&gt;</literal>
+            <sbr/><literal>[,&lt;addrList ...&gt;]</literal></entry>
 
             <entry>This command instantiations a tun/tap virtual interface
             named &lt;<parameter>vifName</parameter>&gt; that is associated
@@ -848,9 +855,11 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>cid &lt;vifName&gt;,&lt;iface1&gt;[/{t|r|d}][,
-            &lt;iface2&gt;[/{t|r|d}][,&lt;iface3&gt;[/{t|r|d}],...]]
-            </literal></entry>
+            <entry><literal>cid</literal>
+            <sbr/><literal>&lt;vifName&gt;,</literal>
+            <sbr/><literal>&lt;iface1&gt;[/{t|r|d}][,</literal>
+            <sbr/><literal>&lt;iface2&gt;[/{t|r|d}][,</literal>
+            <sbr/><literal>&lt;iface3&gt;[/{t|r|d}],...]]</literal></entry>
 
             <entry>The Composite Interface Device (<command>cid</command>)
             command can be used to add (or reconfigure) physical interface
@@ -890,8 +899,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>queue
-            [&lt;ifaceName&gt;,]&lt;queueLimit&gt;</literal></entry>
+            <entry><literal>queue</literal>
+            <sbr/><literal>[&lt;ifaceName&gt;,]&lt;queueLimit&gt;</literal></entry>
 
             <entry>This command enables an <application>nrlsmf</application>
             layer of queuing in addition to whatever queuing (e.g., Linux
@@ -923,8 +932,13 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
             designated IP multicast <parameter>&lt;groupAddr&gt;</parameter>
             on the given <parameter>&lt;ifaceName&gt;</parameter>. This is
             generally needed for GRE decapsulation to successfully work with
-            mGRE operation. This command supports administrative management of
-            those necessary memberships. Future
+            multicast-underlay mGRE (the kernel tunnel remote is the group).
+            On a wildcard-remote mGRE device the kernel does not demux
+            GRE-in-multicast by outer destination; if that same group is
+            also a mapped inject remote, <command>ujoin</command> additionally
+            enables an underlay capture so
+            <application>nrlsmf</application> can strip GRE and treat the
+            inner packet as inbound on the overlay GRE interface. Future
             <application>nrlsmf</application> Elastic Multcast operation may
             support dynamic underlay group membership depending on the overlay
             multicast -&gt; underlay multicast mapping scheme used. Meanwhile
@@ -962,9 +976,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
       <title>Elastic Multicast Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*"/>
+        <colspec colname="Command" colwidth="1.5*"/>
 
-        <colspec colname="Description" colwidth="2.5*"/>
+        <colspec colname="Description" colwidth="2*"/>
 
         <tbody>
           <row>
@@ -1027,9 +1041,10 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>flow
-            &lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]&lt;dstAddr&gt;[/&lt;maskLen&gt;]
-            [,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
+            <entry><literal>flow</literal>
+            <sbr/><literal>&lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]</literal>
+            <sbr/><literal>&lt;dstAddr&gt;[/&lt;maskLen&gt;]</literal>
+            <sbr/><literal>[,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
 
             <entry>Administratively emplace a flow description that will be
             proactively advertised when Elastic Multicast advertise mode is
@@ -1055,9 +1070,10 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>join
-            &lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]&lt;dstAddr&gt;[/&lt;maskLen&gt;]
-            [,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
+            <entry><literal>join</literal>
+            <sbr/><literal>&lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]</literal>
+            <sbr/><literal>&lt;dstAddr&gt;[/&lt;maskLen&gt;]</literal>
+            <sbr/><literal>[,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
 
             <entry>Administratively "join" a flow description that will prompt
             Elastic Multicast routing to acknowledge (via EM_ACK) matching
@@ -1071,9 +1087,10 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>leave
-            &lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]&lt;dstAddr&gt;[/&lt;maskLen&gt;]
-            [,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
+            <entry><literal>leave</literal>
+            <sbr/><literal>&lt;srcAddr&gt;[/&lt;maskLen&gt;]-&gt;]</literal>
+            <sbr/><literal>&lt;dstAddr&gt;[/&lt;maskLen&gt;]</literal>
+            <sbr/><literal>[,&lt;protocol&gt;[,&lt;class&gt;]</literal></entry>
 
             <entry>Administratively "leave" a flow previously set with the
             <command>join</command> command. This will cancel acknowledgment
@@ -1081,28 +1098,40 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>map
-            &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+            <entry><literal>map</literal>
+            <sbr/><literal>&lt;iface&gt;,&lt;localAddr&gt;</literal>
+            <sbr/><literal>[,&lt;remoteAddr&gt;]</literal></entry>
 
             <entry>Maps tunnel endpoint address information for a GRE
             interface (or other ancillary iface-&gt;address associations).
             This enables Elastic Multicast operation to properly match inbound
             EM_ACK messages to the interface upon which the corresponding
-            EM_ADV or forwarded packet was transmitted. Typically, this
-            command is not needed when <command>nrlsmf</command> is able to
-            automatically retrieve the tunnel endpoint information when a
-            tunnel interface is added to an interface group. However, some
-            tunnel configurations (e.g. mGRE) may require this "helper"
-            function as part of <command>nrlsmf</command> setup.</entry>
+            EM_ADV or forwarded packet was transmitted. Repeat the command
+            with the same local address and a different remote to record
+            additional remotes; overlay multicast forwarded onto a
+            wildcard-remote mGRE interface is transmitted once to each
+            mapped remote that is a unicast peer or an underlay multicast
+            group. A remote of <literal>dynamic</literal> learns unicast
+            remotes from the kernel neighbor table on &lt;iface&gt; and
+            keeps them updated (NHRP or static NBMA). It does not apply to
+            metadata/"external" GRE, which needs explicit unicast remotes
+            for overlay-multicast inject. A remote of
+            <literal>0.0.0.0</literal> is the kernel wildcard
+            (INADDR_ANY), not a send destination. Typically this command
+            is not needed for point-to-point GRE or multicast-underlay
+            mGRE (the tunnel remote is already the group).</entry>
           </row>
 
           <row>
-            <entry><literal>unmap
-            &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+            <entry><literal>unmap</literal>
+            <sbr/><literal>&lt;iface&gt;,&lt;localAddr&gt;</literal>
+            <sbr/><literal>[,&lt;remoteAddr&gt;]</literal></entry>
 
             <entry>Deletes matching tunnel endpoint or interface-&gt;address
             associations previously set up with the <command>map</command>
-            command.</entry>
+            command. A remote of <literal>dynamic</literal> stops neighbor
+            learning and removes learned remotes; explicit unicast
+            <command>map</command> entries are left in place.</entry>
           </row>
 
           <row>
@@ -1147,9 +1176,9 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
       <title>Gateway Commands</title>
 
       <tgroup cols="2">
-        <colspec colname="Command" colwidth="1*"/>
+        <colspec colname="Command" colwidth="1.5*"/>
 
-        <colspec colname="Description" colwidth="2.5*"/>
+        <colspec colname="Description" colwidth="2*"/>
 
         <tbody>
           <row>
@@ -1166,8 +1195,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
           </row>
 
           <row>
-            <entry><literal>rpush
-            &lt;srcIface&gt;,&lt;dstIfaceList&gt;</literal></entry>
+            <entry><literal>rpush</literal>
+            <sbr/><literal>&lt;srcIface&gt;,&lt;dstIfaceList&gt;</literal></entry>
 
             <entry>Resequence (modify IPv4 ID field or add IPv6 SMF-DPD option
             header) and force relay of packets from
@@ -1222,100 +1251,818 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
     <sect2 id="GRETunnels">
       <title>GRE Tunnel Interfaces</title>
 
-      <para><application>nrlsmf</application> supports operation on Linux Generic
-      Routing Encapsulation (GRE) interfaces, including point-to-point GRE and
-      point-to-multipoint (mGRE) tunnels. GRE interfaces are treated
-      differently from Ethernet interfaces: packets received on a GRE interface
-      may not include a usable Ethernet header, and tunnel endpoint addresses
-      (local and remote) are used for forwarding and elastic multicast control
-      traffic.</para>
+      <para><application>nrlsmf</application> supports operation on Linux
+      Generic Routing Encapsulation (GRE) and point-to-multipoint (mGRE)
+      interfaces. From a configuration standpoint, a GRE or mGRE interface
+      is just another interface name that can be placed into an
+      <application>nrlsmf</application> interface group alongside physical
+      interfaces. Overlay unicast peer resolution (kernel
+      <literal>ip neigh</literal>, NHRP, or a multicast underlay group)
+      stays outside <application>nrlsmf</application>. Overlay
+      <emphasis>multicast</emphasis> inject onto a wildcard-remote mGRE
+      interface is the exception:
+      <application>nrlsmf</application> transmits once per mapped remote
+      (unicast peers and, optionally, an underlay multicast group).
+      Overlay GRE interfaces are typically
+      <command>layered</command> so a packet received on the tunnel is
+      not flooded back out of it. The NHRP hub is the exception: it must
+      replicate overlay multicast to the spokes. In every mode
+      <application>nrlsmf</application> still floods decapsulated overlay
+      multicast per its relay rules and keeps endpoint information for
+      duplicate packet detection (DPD) and Elastic Multicast.</para>
 
-      <para>When a GRE interface is opened, <application>nrlsmf</application>
-      attempts to read tunnel local and remote endpoint addresses from the
-      operating system. If valid endpoint information is available, it is
-      recorded automatically. Some GRE deployments (for example, lightweight
-      or externally-managed "metadata" GRE tunnels) may not expose complete
-      endpoint information to user space. In those cases, the
-      "<literal>map</literal>" command must be used to associate tunnel
-      endpoint addresses with the interface. A warning is logged when a GRE
-      interface is used without adequate endpoint mapping.</para>
+      <para>GRE interfaces are treated differently from Ethernet interfaces:
+      packets received on a GRE interface may not include a usable Ethernet
+      header, and tunnel endpoint addresses (local and remote) are used for
+      forwarding and Elastic Multicast control traffic.</para>
 
-      <para>For mGRE operation, the remote endpoint may correspond to
-      <literal>INADDR_ANY</literal> (0.0.0.0). The underlay network may
-      require joining a multicast group so encapsulated traffic can be
-      received; use the "<literal>ujoin</literal>" and
-      "<literal>uleave</literal>" commands for this purpose on the physical
-      underlay interface (not on the GRE interface itself).</para>
+      <sect3 id="GREEndpointDiscovery">
+        <title>Endpoint Address Discovery</title>
 
-      <para>When elastic multicast is enabled, GRE tunnel endpoints are also
-      used to identify the correct interface for elastic control messages
-      (for example, EM_ACK). JSON configuration file support for GRE tunnel
-      mapping is not yet available; use command-line or run-time remote
-      control commands instead.</para>
+        <para>When a GRE interface is opened,
+        <application>nrlsmf</application> reads the tunnel's local and
+        remote endpoint addresses from the operating system. This is enough
+        for point-to-point GRE and for multicast-underlay mGRE (the
+        tunnel remote is already a multicast group): there is a single
+        remote, so one transmission has a well-defined destination.</para>
 
-      <table>
+        <para><literal>map
+        &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal>
+        records tunnel endpoint information in
+        <application>nrlsmf</application>'s interface-info table. Multiple
+        <command>map</command> commands with the same local address and
+        different remotes add multiple peers. That list is used in two
+        ways:</para>
+
+        <itemizedlist>
+          <listitem>
+            <para>DPD / Elastic Multicast bookkeeping (all GRE modes).</para>
+          </listitem>
+
+          <listitem>
+            <para>Overlay multicast inject onto a wildcard-remote
+            (<literal>0.0.0.0</literal>) mGRE interface: the kernel has
+            no single destination for overlay multicast, so
+            <application>nrlsmf</application> transmits once per mapped
+            remote that is a unicast peer or an underlay multicast group.
+            Unicast remotes come from explicit
+            <literal>map &lt;iface&gt;,&lt;local&gt;,&lt;peer&gt;</literal>
+            and/or
+            <literal>map &lt;iface&gt;,&lt;local&gt;,dynamic</literal>
+            (kernel neighbor table). A mapped remote may also be an
+            underlay multicast group; that is an explicit
+            <command>map</command>, not learned by
+            <literal>dynamic</literal>, and inbound GRE-in-multicast on
+            that group needs <command>ujoin</command> as well. Overlay
+            unicast on that same
+            interface still uses the kernel neighbor table
+            (<literal>ip neigh</literal>), not <command>map</command>.
+            <literal>map gre0,10.0.0.2,0.0.0.0</literal> is allowed: it
+            records the kernel wildcard remote
+            (<literal>INADDR_ANY</literal>) for DPD / Elastic Multicast
+            bookkeeping. It is not a send destination and not a synonym
+            for <literal>dynamic</literal>. Opening a tunnel that already
+            has <literal>remote 0.0.0.0</literal> stores the same
+            mapping, so that command is usually redundant.</para>
+          </listitem>
+        </itemizedlist>
+
+        <para>The other case that requires <command>map</command> is a
+        "lightweight" or "metadata" GRE interface (externally-managed
+        tunnel with no fixed endpoints on the device).
+        <application>nrlsmf</application> logs a warning that the
+        interface is missing tunnel endpoint addressing until
+        <command>map</command> supplies it.</para>
+
+        <para>When Elastic Multicast is enabled, GRE tunnel endpoints are
+        also used to identify the correct interface for elastic control
+        messages (for example, EM_ACK). JSON configuration file support
+        for GRE tunnel mapping is not yet available; use command-line or
+        run-time remote control commands instead.</para>
+      </sect3>
+
+      <sect3 id="GREPointToPoint">
+        <title>Point-to-Point GRE</title>
+
+        <para>A point-to-point GRE tunnel has one fixed local address and
+        one fixed remote address, configured once at tunnel setup. There
+        is no ambiguity about where an outbound packet goes, so no
+        ongoing peer-resolution mechanism is needed.</para>
+
+        <para><emphasis>Topology:</emphasis></para>
+
+        <programlisting>      Node A                        WAN / Underlay                    Node B
+ +---------------+                                             +---------------+
+ |  eth0 (uplink)|&lt;------------------------------------------->|  eth0 (uplink)|
+ |  10.0.0.2     |                                              |  10.0.1.2     |
+ |  gre0         |=========== GRE tunnel (P2P) ================|  gre0         |
+ |  172.16.0.1   |                                              |  172.16.0.2   |
+ |  wlan0 (MANET)|                                              |  eth1 (LAN)   |
+ |  SMF flooding |                                              |  multicast    |
+ |               |                                              |  receivers    |
+ +---------------+                                             +---------------+</programlisting>
+
+        <para><emphasis>Kernel-level setup (Node A):</emphasis></para>
+
+        <programlisting>ip tunnel add gre0 mode gre local 10.0.0.2 remote 10.0.1.2 ttl 32
+ip addr add 172.16.0.1/30 dev gre0
+ip link set gre0 up</programlisting>
+
+        <para><emphasis>nrlsmf configuration (Node A):</emphasis></para>
+
+        <programlisting>nrlsmf resequence on \
+       cf wlan0 \
+       rpush wlan0,gre0 \
+       push gre0,wlan0 \
+       layered gre0</programlisting>
+
+        <itemizedlist>
+          <listitem>
+            <para><literal>cf wlan0</literal> — classical flooding within
+            the MANET.</para>
+          </listitem>
+
+          <listitem>
+            <para><literal>rpush wlan0,gre0</literal> — relay
+            MANET-originated traffic across the tunnel, tagging it for
+            DPD.</para>
+          </listitem>
+
+          <listitem>
+            <para><literal>push gre0,wlan0</literal> — relay traffic from
+            the far side back into the MANET (already tagged).</para>
+          </listitem>
+
+          <listitem>
+            <para><literal>layered gre0</literal> — a point-to-point
+            tunnel gains nothing from being re-flooded out itself.</para>
+          </listitem>
+        </itemizedlist>
+
+        <para><emphasis>Typical use case:</emphasis> connecting two MANET
+        "islands," or a MANET to a fixed-infrastructure multicast network,
+        across a WAN hop with no native multicast support.</para>
+      </sect3>
+
+      <sect3 id="GREMultipoint">
+        <title>Multipoint GRE (mGRE)</title>
+
+        <para>A single mGRE interface represents multiple remote peers
+        instead of one. GRE itself has no built-in signaling for which
+        peer a packet goes to; three different mechanisms answer that
+        question for overlay unicast, entirely below
+        <application>nrlsmf</application>.</para>
+
+        <para>Modes A and B are, at the kernel level, the same mechanism
+        — an mGRE interface with no fixed remote
+        (<literal>remote 0.0.0.0</literal>) and a neighbor-resolution
+        table that maps overlay tunnel addresses to underlay peer
+        addresses — differing only in whether that table is maintained by
+        a routing daemon or by hand. Mode C is fundamentally different:
+        instead of per-peer unicast resolution, it turns the tunnel into a
+        virtual broadcast/multicast segment.</para>
+
+        <sect4 id="GREModeA">
+          <title>Mode A — NHRP-resolved mGRE (dynamic hub-and-spoke)</title>
+
+          <para>Peers ("spokes") register their real underlay address with
+          a Next Hop Resolution Protocol (NHRP) server (typically a hub,
+          or "NHS" — Next Hop Server). Any peer needing to reach another
+          resolves the destination's tunnel-address-to-underlay-address
+          mapping dynamically through the NHS, and the kernel encapsulates
+          directly to the resolved address. This is the mechanism behind
+          Cisco DMVPN-style deployments; on Linux/FRR it is provided by
+          FRR's <application>nhrpd</application> daemon (RFC 2332), which
+          handles NHRP registration and resolution independently of
+          <application>nrlsmf</application>.
+          <application>nrlsmf</application> itself has no NHRP support
+          and does not need any: by the time a decapsulated packet
+          reaches <application>nrlsmf</application> on the mGRE
+          interface, <application>nhrpd</application> and the kernel have
+          already resolved and delivered it.</para>
+
+          <para><emphasis>Topology:</emphasis></para>
+
+          <programlisting>                    Hub / NHRP Server (NHS)
+                    +------------------------+
+                    |  eth0 (uplink)         |
+                    |  10.0.0.2              |
+                    |  gre0 (mGRE)           |
+                    |  172.16.0.1            |
+                    +-----------+------------+
+                                |
+                           Underlay / WAN
+                dynamic NHRP resolution, per-peer unicast
+           /                    |                    \
+ +-------------------+  +-------------------+   +-------------------+
+ | Spoke S1          |  | Spoke S2          |   | Spoke S3          |
+ | eth0 10.0.1.2     |  | eth0 10.0.2.2     |   | eth0 10.0.3.2     |
+ | gre0 172.16.0.2   |  | gre0 172.16.0.3   |   | gre0 172.16.0.4   |
+ +-------------------+  +-------------------+   +-------------------+</programlisting>
+
+          <para><emphasis>Kernel + FRR setup (Hub):</emphasis></para>
+
+          <programlisting>ip tunnel add gre0 mode gre local 10.0.0.2 key 42 ttl 64
+ip addr add 172.16.0.1/32 dev gre0
+ip link set gre0 up</programlisting>
+
+          <para>Omitting <literal>remote</literal> is the same as
+          <literal>remote 0.0.0.0</literal> (kernel wildcard):</para>
+
+          <programlisting>ip tunnel add gre0 mode gre local 10.0.0.2 remote 0.0.0.0 key 42 ttl 64</programlisting>
+
+          <programlisting>interface gre0
+ ip nhrp network-id 1
+ ip nhrp registration no-unique</programlisting>
+
+          <para>The hub's own ordinary underlay address
+          (<literal>10.0.0.2</literal>, whatever interface it already
+          uses to reach the WAN) doubles as its NBMA identity — no
+          separate loopback or special addressing is required.</para>
+
+          <para><emphasis>Kernel + FRR setup (Spoke S1; S2 and S3 use
+          <literal>10.0.2.2</literal>/<literal>172.16.0.3</literal> and
+          <literal>10.0.3.2</literal>/<literal>172.16.0.4</literal>):</emphasis></para>
+
+          <programlisting>ip tunnel add gre0 mode gre local 10.0.1.2 key 42 ttl 64
+ip addr add 172.16.0.2/32 dev gre0
+ip link set gre0 up</programlisting>
+
+          <para>Equivalent wildcard remote:</para>
+
+          <programlisting>ip tunnel add gre0 mode gre local 10.0.1.2 remote 0.0.0.0 key 42 ttl 64</programlisting>
+
+          <programlisting>interface gre0
+ ip nhrp network-id 1
+ ip nhrp nhs 172.16.0.1 nbma 10.0.0.2
+ ip nhrp registration no-unique</programlisting>
+
+          <para><application>nhrpd</application> installs overlay-to-
+          underlay neighbors. A spoke's neighbor table is the NHS; the
+          hub's table is every registered spoke. Overlay unicast therefore
+          looks like static NBMA. Overlay multicast does not: a spoke has
+          only the hub as a mapped unicast remote, so overlay multicast
+          from a spoke goes to the hub, and the hub's
+          <application>nrlsmf</application> must replicate it to the
+          other spokes. Spokes are <command>layered</command> so a packet
+          received on the tunnel is not flooded back out of it. The hub
+          is <emphasis>not</emphasis> layered, because it is the overlay
+          replicator.</para>
+
+          <para><emphasis>nrlsmf configuration (hub; each spoke
+          underlay address is a remote):</emphasis></para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       map gre0,10.0.0.2,10.0.1.2 \
+       map gre0,10.0.0.2,10.0.2.2 \
+       map gre0,10.0.0.2,10.0.3.2</programlisting>
+
+          <para>Equivalent using neighbor learning
+          (<application>nhrpd</application> installs the same unicast
+          remotes in <literal>ip neigh</literal>):</para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       map gre0,10.0.0.2,dynamic</programlisting>
+
+          <para><emphasis>nrlsmf configuration (spoke S1; S2 and S3 use
+          their own underlay address):</emphasis></para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       layered gre0 \
+       map gre0,10.0.1.2,dynamic</programlisting>
+
+          <para><literal>map …,dynamic</literal> is the usual inject
+          config with NHRP:
+          <application>nhrpd</application> programs
+          <literal>ip neigh</literal>, and
+          <application>nrlsmf</application> learns those unicast remotes.
+          Explicit maps of <literal>0.0.0.0</literal> record the kernel
+          wildcard remote for DPD / Elastic Multicast bookkeeping; they
+          are not send destinations and not a synonym for
+          <literal>dynamic</literal>.</para>
+
+          <para>Production DMVPN deployments typically add IPsec
+          (<application>nhrpd</application> integrates with strongSwan
+          via the VICI protocol) to protect the overlay traffic; that is
+          independent of <application>nrlsmf</application> and omitted
+          here. Spoke-to-spoke "shortcut" tunnels (DMVPN Phase 2/3)
+          require additional NFLOG/iptables configuration and are not
+          used for overlay multicast with
+          <application>nrlsmf</application> classic flooding — see FRR's
+          <application>nhrpd</application> documentation for that
+          setup.</para>
+        </sect4>
+
+        <sect4 id="GREModeB">
+          <title>Mode B — Statically-mapped mGRE (manual NBMA table)</title>
+
+          <para>Mechanically identical to Mode A at the kernel level —
+          same <literal>remote 0.0.0.0</literal> mGRE interface — but
+          the peer-resolution table is populated by hand instead of by a
+          routing daemon.</para>
+
+          <para>Overlay unicast is resolved by the kernel neighbor table
+          (overlay-addr to underlay-addr). On Node A:</para>
+
+          <programlisting>ip neigh add 172.16.0.2 lladdr 10.0.1.2 dev gre0 nud permanent
+ip neigh add 172.16.0.3 lladdr 10.0.2.2 dev gre0 nud permanent
+ip neigh add 172.16.0.4 lladdr 10.0.3.2 dev gre0 nud permanent</programlisting>
+
+          <para>Overlay multicast has no entry in that table (and a
+          single send cannot fan out to several unicast underlay
+          destinations). <application>nrlsmf</application> injects
+          overlay multicast once per mapped remote in its
+          interface-info table. Those remotes are usually the same
+          unicast peers as in <literal>ip neigh</literal>, but a mapped
+          remote may also be an underlay multicast group (see
+          <xref linkend="GREMixedUnderlay"/>).</para>
+
+          <para>The topology has the same shape as Mode A's diagram, with
+          static <literal>ip neigh</literal> entries in place of
+          <application>nhrpd</application>; typically used for a small,
+          fixed set of known peers.</para>
+
+          <para><emphasis>nrlsmf configuration</emphasis> (Node A, local
+          underlay <literal>10.0.0.2</literal>):</para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       layered gre0 \
+       map gre0,10.0.0.2,10.0.1.2 \
+       map gre0,10.0.0.2,10.0.2.2 \
+       map gre0,10.0.0.2,10.0.3.2</programlisting>
+
+          <para>Equivalent using neighbor learning from the
+          <literal>ip neigh</literal> table above
+          (<literal>dynamic</literal> dumps that table and keeps it
+          updated via <literal>NEWNEIGH</literal>/<literal>DELNEIGH</literal>):</para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       layered gre0 \
+       map gre0,10.0.0.2,dynamic</programlisting>
+
+          <para>The wildcard remote can be mapped explicitly. This is
+          allowed, but it is not a send destination and not a synonym
+          for <literal>dynamic</literal>. Opening
+          <literal>gre0</literal> already records it from the kernel,
+          so it is usually redundant:</para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       layered gre0 \
+       map gre0,10.0.0.2,0.0.0.0</programlisting>
+
+          <para><emphasis>Typical use case:</emphasis> a handful of
+          fixed, stable sites where the operational overhead of running
+          NHRP is not worth it, but a single mGRE interface (instead of
+          one point-to-point interface per peer) is still
+          convenient.</para>
+        </sect4>
+
+        <sect4 id="GREModeC">
+          <title>Mode C — Multicast-underlay mGRE</title>
+
+          <para>The tunnel's remote address is configured as an IP
+          multicast group address rather than a unicast peer or a
+          wildcard. A single encapsulated transmission is sent once, to
+          that group; the underlay network's own multicast routing (for
+          example, PIM) replicates and delivers it to every peer that
+          has joined the group. This is the mode
+          <application>nrlsmf</application>'s
+          <command>ujoin</command>/<command>uleave</command> commands
+          exist for, and it is the most natural fit for SMF: symmetric,
+          no hub, no per-peer replication — the same job SMF already
+          does on a physical broadcast medium, relocated onto a
+          WAN.</para>
+
+          <para><emphasis>Topology:</emphasis></para>
+
+          <programlisting>              Underlay network with native IP multicast
+                     routing (e.g. PIM), group 239.1.1.1
+                    /              |               \
+                   /               |                \
+        +-----------------+  +-----------------+  +-----------------+
+        | Node A          |  | Node B          |  | Node C          |
+        | eth0 (underlay) |  | eth0 (underlay) |  | eth0 (underlay) |
+        | 10.0.0.2        |  | 10.0.1.2        |  | 10.0.2.2        |
+        | gre0 (mGRE)     |  | gre0 (mGRE)     |  | gre0 (mGRE)     |
+        | 172.16.0.1      |  | 172.16.0.2      |  | 172.16.0.3      |
+        | remote=239.1.1.1|  | remote=239.1.1.1|  | remote=239.1.1.1|
+        | wlan0 (MANET)   |  | wlan0 (MANET)   |  | wlan0 (MANET)   |
+        +-----------------+  +-----------------+  +-----------------+</programlisting>
+
+          <para><emphasis>Kernel-level setup (Node A; Node B and Node C
+          use <literal>10.0.1.2</literal>/<literal>172.16.0.2</literal>
+          and
+          <literal>10.0.2.2</literal>/<literal>172.16.0.3</literal> —
+          symmetric, no hub role):</emphasis></para>
+
+          <programlisting>ip tunnel add gre0 mode gre local 10.0.0.2 remote 239.1.1.1 ttl 16
+ip addr add 172.16.0.1/24 dev gre0
+ip link set gre0 up</programlisting>
+
+          <para><emphasis>nrlsmf configuration (each node):</emphasis></para>
+
+          <programlisting>nrlsmf add overlay,cf,gre0,wlan0 \
+       layered gre0 \
+       ujoin 239.1.1.1,eth0</programlisting>
+
+          <para><command>ujoin</command>/<command>uleave</command> are
+          issued against the <emphasis>underlay</emphasis> interface
+          (<literal>eth0</literal>), not the GRE interface itself — they
+          join or leave the multicast group on the physical network so
+          the kernel GRE device (whose remote is already that group)
+          actually receives the encapsulated traffic to decapsulate.
+          Mirror with <literal>uleave 239.1.1.1,eth0</literal> on
+          shutdown or reconfiguration. This is not the same as mapping
+          a multicast group onto a wildcard-remote mGRE device; the
+          kernel already demuxes GRE-in-multicast onto the tunnel, so
+          <application>nrlsmf</application> does not also strip GRE from
+          underlay capture (that would double-process the packet).</para>
+
+          <para>When Elastic Multicast routing is enabled, the same
+          tunnel endpoint information is used to route EM control
+          traffic (for example, <literal>EM_ACK</literal>) to the
+          correct interface — another reason accurate endpoint state
+          matters even when data-plane decapsulation "just works."</para>
+
+          <para>This mode only works if the underlay genuinely supports
+          IP multicast routing end-to-end. If it does not, GRE-over-
+          multicast can silently fall back to resolving individual
+          neighbors instead of true multicast fan-out — worth verifying
+          the underlay's multicast path explicitly before relying on
+          this mode.</para>
+        </sect4>
+
+        <sect4 id="GREMixedUnderlay">
+          <title>Mixed underlay: multicast group plus unicast peers</title>
+
+          <para>Wildcard-remote mGRE (Modes A and B) can inject overlay
+          multicast to an underlay multicast group as well as to unicast
+          peers. That is useful when some sites can join the group and
+          others cannot: one transmission covers the multicast-capable
+          set, and additional transmissions cover the unicast-only
+          peers. The kernel tunnel remote stays
+          <literal>0.0.0.0</literal>; this is not multicast-underlay
+          mGRE (Mode C), whose device remote is already the group.</para>
+
+          <para>A Linux wildcard-remote mGRE device cannot send overlay
+          multicast as GRE-in-multicast by itself (there is no multicast
+          <literal>sll_addr</literal> for
+          <literal>PF_PACKET</literal>), and it does not demux inbound
+          GRE-in-multicast either: kernel GRE lookup matches the tunnel
+          local address, not the outer multicast destination. Mapping
+          the group as an inject remote makes
+          <application>nrlsmf</application> send GRE-in-multicast once
+          to that group. <command>ujoin</command> of the same group on
+          the underlay interface both joins IGMP and enables an underlay
+          capture so <application>nrlsmf</application> can strip GRE and
+          treat the inner packet as inbound on the overlay GRE
+          interface. Do not enable that capture on a multicast-underlay
+          GRE device: the kernel already delivers the packet on the
+          tunnel, and a second strip would double-process it.</para>
+
+          <para><emphasis>Topology:</emphasis> five overlay routers on
+          one wildcard-remote mGRE. Nodes A, B, and C can join underlay
+          group <literal>239.1.1.1</literal>. Nodes D and E cannot.</para>
+
+          <programlisting>       Node A -- lan0 --\
+       Node B -- lan1 ---\
+       Node C -- lan2 ---- underlay   A/B/C join 239.1.1.1
+       Node D -- lan3 ---/            D/E unicast only
+       Node E -- lan4 --/</programlisting>
+
+          <para><emphasis>Kernel-level setup (Node A; B–E use their own
+          underlay and overlay addresses). Same wildcard-remote mGRE as
+          Modes A and B — the tunnel remote is
+          <literal>0.0.0.0</literal>, not the underlay group:</emphasis></para>
+
+          <programlisting>ip tunnel add gre0 mode gre local 10.0.0.2 remote 0.0.0.0 ttl 64
+ip addr add 172.16.0.1/24 dev gre0
+ip link set gre0 multicast on
+ip link set gre0 up</programlisting>
+
+          <para>Overlay unicast still needs kernel neighbors (Node A;
+          these can also be added by a dynamic protocol such as
+          NHRP):</para>
+
+          <programlisting>ip neigh add 172.16.0.2 lladdr 10.0.1.2 dev gre0 nud permanent
+ip neigh add 172.16.0.3 lladdr 10.0.2.2 dev gre0 nud permanent
+ip neigh add 172.16.0.4 lladdr 10.0.3.2 dev gre0 nud permanent
+ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
+
+          <para>On A, B, and C, point the underlay group at the physical
+          iface so GRE-in-multicast has an output device:</para>
+
+          <programlisting>ip route replace 239.1.1.1/32 dev eth0</programlisting>
+
+          <para><emphasis>nrlsmf configuration (Node A; B and C are the
+          same with their own underlay address):</emphasis></para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       layered gre0 \
+       ujoin 239.1.1.1,eth0 \
+       map gre0,10.0.0.2,239.1.1.1 \
+       map gre0,10.0.0.2,10.0.3.2 \
+       map gre0,10.0.0.2,10.0.4.2</programlisting>
+
+          <para>Overlay multicast inject from A is then three GRE
+          transmissions: one to <literal>239.1.1.1</literal>, one to D
+          (<literal>10.0.3.2</literal>), and one to E
+          (<literal>10.0.4.2</literal>). Overlay unicast still uses
+          kernel <literal>ip neigh</literal>.</para>
+
+          <para>Nodes D and E create the same wildcard-remote tunnel
+          (Node D: local <literal>10.0.3.2</literal> / overlay
+          <literal>172.16.0.4</literal>) and the same style of
+          <literal>ip neigh</literal> entries. They do not add the
+          underlay group route.</para>
+
+          <para><emphasis>nrlsmf configuration (Node D; E is the same
+          with its own underlay address and no
+          <command>ujoin</command>):</emphasis></para>
+
+          <programlisting>nrlsmf add overlay,cf,eth1,gre0 \
+       layered gre0 \
+       map gre0,10.0.3.2,10.0.0.2 \
+       map gre0,10.0.3.2,10.0.1.2 \
+       map gre0,10.0.3.2,10.0.2.2 \
+       map gre0,10.0.3.2,10.0.4.2</programlisting>
+
+          <para><command>layered</command> on the overlay GRE interface
+          keeps a packet that arrived on the tunnel from being flooded
+          back out of it, so a unicast-only router does not re-inject
+          toward the multicast set. Traffic that arrives on
+          <literal>eth1</literal> is still injected onto
+          <literal>gre0</literal>.</para>
+        </sect4>
+      </sect3>
+
+      <sect3 id="GREExternal">
+        <title>External (metadata) GRE</title>
+
+        <para>A fourth way GRE encapsulation parameters can be resolved,
+        distinct from all three mGRE modes above:
+        <literal>ip link add ... type gre external</literal> creates an
+        interface with no fixed local, remote, or key at all. Instead,
+        whatever adds routes or flow rules for it supplies the
+        encapsulation parameters per destination, using Linux's
+        lightweight tunnel ("lwtunnel") route encap:</para>
+
+        <programlisting>ip route add 172.16.0.2/32 encap ip id 42 src 10.0.0.2 dst 10.0.1.2 ttl 16 dev gre0</programlisting>
+
+        <para>This is the mechanism SDN controllers and OVS/OVN typically
+        use to build many per-flow or per-peer tunnels dynamically out of
+        a single device. It is conceptually the multipoint-resolution
+        equivalent of Mode B's static neighbor table — same job,
+        expressed as routes instead of neighbor entries — but because
+        the device itself has no fixed endpoint addresses, this is the
+        one case where <application>nrlsmf</application>'s
+        <command>map</command> command is actually mandatory: there is
+        nothing for <application>nrlsmf</application> to auto-discover
+        from the interface, and it will log a warning
+        (<literal>GRE interface '&lt;name&gt;' missing tunnel endpoint
+        addressing. (must map it)</literal>) until <command>map</command>
+        supplies a local address. Overlay unicast still uses the kernel
+        lwtunnel routes. Overlay multicast inject has no single remote,
+        so <application>nrlsmf</application> also needs unicast remotes
+        in that same map table
+        (<literal>map &lt;iface&gt;,&lt;local&gt;,&lt;peer&gt;</literal>
+        per peer).
+        <literal>map …,0.0.0.0</literal> is only the wildcard
+        bookkeeping form; <literal>map …,dynamic</literal> does not
+        apply (no <literal>ip neigh</literal>).</para>
+
+        <para><emphasis>nrlsmf configuration (Node A):</emphasis></para>
+
+        <programlisting>nrlsmf add overlay,cf,gre0 \
+       layered gre0 \
+       map gre0,10.0.0.2,10.0.1.2 \
+       map gre0,10.0.0.2,10.0.2.2</programlisting>
+      </sect3>
+
+      <sect3 id="GREModeFit">
+        <title>Where Each Mode Fits</title>
+
+        <table>
+          <title>GRE / mGRE modes</title>
+
+          <tgroup cols="4">
+            <colspec colname="Mode" colwidth="1.2*"/>
+            <colspec colname="Resolution" colwidth="1.3*"/>
+            <colspec colname="Nrlsmf" colwidth="1.5*"/>
+            <colspec colname="Use" colwidth="1.5*"/>
+
+            <thead>
+              <row>
+                <entry>Mode</entry>
+                <entry>Peer resolution</entry>
+                <entry>nrlsmf extras</entry>
+                <entry>Typical use</entry>
+              </row>
+            </thead>
+
+            <tbody>
+              <row>
+                <entry>P2P GRE</entry>
+                <entry>Fixed at setup</entry>
+                <entry>typically <command>layered</command></entry>
+                <entry>Two fixed sites; MANET-island bridging over a WAN
+                hop</entry>
+              </row>
+
+              <row>
+                <entry>mGRE Mode A (NHRP)</entry>
+                <entry>Dynamic, per-peer unicast (FRR
+                <application>nhrpd</application>)</entry>
+                <entry><literal>map …,dynamic</literal> (or explicit
+                unicast <command>map</command>s); spokes
+                <command>layered</command>, hub not (replicator)</entry>
+                <entry>Hub-and-spoke overlay multicast; NHRP/DMVPN-style
+                tooling already in place</entry>
+              </row>
+
+              <row>
+                <entry>mGRE Mode B (static NBMA)</entry>
+                <entry>Static, per-peer unicast (manual
+                <literal>ip neigh</literal>)</entry>
+                <entry>explicit unicast <command>map</command>s (or
+                <literal>map …,dynamic</literal>); typically
+                <command>layered</command></entry>
+                <entry>Small, fixed set of known peers; avoids running
+                NHRP</entry>
+              </row>
+
+              <row>
+                <entry>mGRE mixed underlay</entry>
+                <entry>Same wildcard-remote device as Modes A/B;
+                overlay multicast inject to an underlay group
+                <emphasis>and</emphasis> unicast peers</entry>
+                <entry><command>ujoin</command> plus
+                <command>map</command> of the group (GRE-in-mcast send
+                and underlay demux); unicast
+                <command>map</command>s for peers that cannot join;
+                typically <command>layered</command></entry>
+                <entry>Some sites can join underlay multicast, others
+                cannot</entry>
+              </row>
+
+              <row>
+                <entry>mGRE Mode C (multicast underlay)</entry>
+                <entry>None — underlay multicast fan-out (PIM)</entry>
+                <entry><command>ujoin</command>/<command>uleave</command>
+                on the underlay interface (IGMP join; kernel demuxes
+                GRE-in-mcast onto the tunnel)</entry>
+                <entry>Symmetric SMF/MANET-gateway overlays</entry>
+              </row>
+
+              <row>
+                <entry>External (metadata) GRE</entry>
+                <entry>Per-destination lwtunnel routes (often
+                SDN-managed)</entry>
+                <entry><command>map</command> is mandatory; remotes for
+                overlay multicast inject; typically
+                <command>layered</command></entry>
+                <entry>SDN/OVS-managed overlays; an external controller
+                provisions tunnel endpoints</entry>
+              </row>
+            </tbody>
+          </tgroup>
+        </table>
+
+        <itemizedlist>
+          <listitem>
+            <para>Modes A and B are the same underlying mechanism — an
+            mGRE interface with no fixed remote and a peer-resolution
+            table — differing only in whether that table is maintained
+            dynamically (NHRP) or by hand. The same wildcard-remote
+            device can also map an underlay multicast group as one
+            overlay-multicast inject dest (mixed underlay); that is not
+            multicast-underlay mGRE (Mode C).</para>
+          </listitem>
+
+          <listitem>
+            <para>Point-to-point and multicast-underlay mGRE (Mode C)
+            rely on <application>nrlsmf</application>'s automatic
+            endpoint discovery (one configured remote). Modes A and B
+            overlay unicast use kernel neigh
+            (<application>nhrpd</application> or
+            <literal>ip neigh</literal>); overlay multicast inject uses
+            SMF's map table, filled by explicit
+            <command>map</command>s (unicast peers and/or an underlay
+            multicast group) and/or
+            <literal>map …,dynamic</literal>.</para>
+          </listitem>
+
+          <listitem>
+            <para><command>map</command> is mandatory for
+            "external"/metadata GRE (no endpoints on the device). For
+            Mode A/B overlay multicast, mapped remotes (or
+            <literal>map …,dynamic</literal>)
+            are required. <literal>0.0.0.0</literal> means wildcard
+            remote, matching the kernel. It is not needed for
+            point-to-point or Mode C. Mapping an underlay multicast
+            group onto a wildcard-remote mGRE also requires
+            <command>ujoin</command> of that group so inbound
+            GRE-in-multicast can be demuxed.</para>
+          </listitem>
+
+          <listitem>
+            <para>In every mode, once packets reach
+            <application>nrlsmf</application> they are handled by the
+            same relay logic
+            (<literal>cf</literal> / <literal>smpr</literal> /
+            <literal>ecds</literal> / <literal>push</literal> /
+            <literal>rpush</literal> / <literal>merge</literal> /
+            <literal>rmerge</literal> / <literal>layered</literal>)
+            as any other interface. Overlay multicast inject onto a
+            wildcard-remote mGRE is the extra send-side step: one
+            transmission per mapped remote (unicast peer or underlay
+            group), still using that same relay decision. Overlay GRE
+            interfaces are typically <command>layered</command>; the
+            NHRP hub is not, because it replicates overlay multicast.</para>
+          </listitem>
+        </itemizedlist>
+      </sect3>
+
+      <sect3 id="GRETunnelCommands">
         <title>GRE Tunnel Commands</title>
 
-        <tgroup cols="2">
-          <colspec colname="Command" colwidth="1*"/>
+        <table>
+          <title>GRE Tunnel Commands</title>
 
-          <colspec colname="Description" colwidth="2.5*"/>
+          <tgroup cols="2">
+            <colspec colname="Command" colwidth="1.5*"/>
 
-          <tbody>
-            <row>
-              <entry><literal>map
-              &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+            <colspec colname="Description" colwidth="2*"/>
 
-              <entry>Associate tunnel endpoint address information with
-              &lt;<literal>iface</literal>&gt;. If
-              &lt;<literal>remoteAddr</literal>&gt; is omitted or invalid, the
-              &lt;<literal>localAddr</literal>&gt; is recorded as an ordinary
-              local interface address. If
-              &lt;<literal>remoteAddr</literal>&gt; is valid, the mapping is
-              recorded as tunnel endpoint information for GRE or other tunnel
-              interfaces. For mGRE, &lt;<literal>remoteAddr</literal>&gt; may
-              be 0.0.0.0.</entry>
-            </row>
+            <tbody>
+              <row>
+                <entry><literal>map</literal>
+            <sbr/><literal>&lt;iface&gt;,&lt;localAddr&gt;</literal>
+            <sbr/><literal>[,&lt;remoteAddr&gt;]</literal></entry>
 
-            <row>
-              <entry><literal>unmap
-              &lt;iface&gt;,&lt;localAddr&gt;[,&lt;remoteAddr&gt;]</literal></entry>
+                <entry>Associate tunnel endpoint address information with
+                &lt;<literal>iface</literal>&gt;. If
+                &lt;<literal>remoteAddr</literal>&gt; is omitted or
+                invalid, the &lt;<literal>localAddr</literal>&gt; is
+                recorded as an ordinary local interface address. If
+                &lt;<literal>remoteAddr</literal>&gt; is valid, the
+                mapping is recorded as tunnel endpoint information for
+                GRE or other tunnel interfaces. For mGRE,
+                &lt;<literal>remoteAddr</literal>&gt; may be 0.0.0.0
+                (kernel wildcard remote, not a send dest).
+                <literal>dynamic</literal> learns unicast remotes from
+                the kernel neighbor table (NHRP or static NBMA). It does
+                not apply to metadata/"external" GRE. Multiple commands
+                with different remotes record multiple inject
+                destinations (unicast peers and/or an underlay multicast
+                group) on a wildcard-remote mGRE interface or a metadata
+                GRE device.</entry>
+              </row>
 
-              <entry>Remove a previously configured tunnel or local address
-              mapping from &lt;<literal>iface</literal>&gt;. The address
-              arguments must match those supplied to
-              "<literal>map</literal>".</entry>
-            </row>
+              <row>
+                <entry><literal>unmap</literal>
+            <sbr/><literal>&lt;iface&gt;,&lt;localAddr&gt;</literal>
+            <sbr/><literal>[,&lt;remoteAddr&gt;]</literal></entry>
 
-            <row>
-              <entry><literal>ujoin
-              &lt;groupAddr&gt;,&lt;iface&gt;</literal></entry>
+                <entry>Remove a previously configured tunnel or local
+                address mapping from
+                &lt;<literal>iface</literal>&gt;. The address arguments
+                must match those supplied to
+                "<literal>map</literal>". A remote of
+                <literal>dynamic</literal> stops neighbor learning and
+                removes learned remotes only.</entry>
+              </row>
 
-              <entry>Join multicast group &lt;<literal>groupAddr</literal>&gt;
-              on underlay interface &lt;<literal>iface</literal>&gt; to enable
-              reception of mGRE multicast-encapsulated traffic. The group
-              address must be a valid IP multicast address.</entry>
-            </row>
+              <row>
+                <entry><literal>ujoin
+                &lt;groupAddr&gt;,&lt;iface&gt;</literal></entry>
 
-            <row>
-              <entry><literal>uleave
-              &lt;groupAddr&gt;,&lt;iface&gt;</literal></entry>
+                <entry>Join multicast group
+                &lt;<literal>groupAddr</literal>&gt; on underlay
+                interface &lt;<literal>iface</literal>&gt; so the host
+                receives GRE-in-multicast. On multicast-underlay mGRE
+                this is an IGMP join so the kernel tunnel (remote
+                already the group) can decapsulate. On a wildcard-remote
+                mGRE device, if that same group is also a mapped inject
+                remote, this additionally enables underlay capture so
+                <application>nrlsmf</application> can strip GRE and
+                treat the inner packet as inbound on the overlay GRE
+                interface. The group address must be a valid IP
+                multicast address.</entry>
+              </row>
 
-              <entry>Leave multicast group &lt;<literal>groupAddr</literal>&gt;
-              on underlay interface &lt;<literal>iface</literal>&gt;.</entry>
-            </row>
-          </tbody>
-        </tgroup>
-      </table>
+              <row>
+                <entry><literal>uleave
+                &lt;groupAddr&gt;,&lt;iface&gt;</literal></entry>
 
-      <para><emphasis>Example:</emphasis> The following example adds GRE and
-      Ethernet interfaces to a flooding group, maps explicit tunnel endpoints
-      for a metadata GRE interface, and joins an underlay multicast group
-      for mGRE reception:</para>
-
-      <programlisting><?dbfo keep-together="always"?>nrlsmf add mygroup,cf,gre0,eth0 \
-       map gre0,10.0.0.1,10.0.0.2 \
-       ujoin 239.1.1.1,eth0</programlisting>
+                <entry>Leave multicast group
+                &lt;<literal>groupAddr</literal>&gt; on underlay
+                interface &lt;<literal>iface</literal>&gt;.</entry>
+              </row>
+            </tbody>
+          </tgroup>
+        </table>
+      </sect3>
     </sect2>
 
     <sect2 id="VirtualInterfaces">
@@ -1330,13 +2077,14 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
         <title>Virtual Interface Commands</title>
 
         <tgroup cols="2">
-          <colspec colname="Command" colwidth="1*"/>
-          <colspec colname="Description" colwidth="2.5*"/>
+          <colspec colname="Command" colwidth="1.5*"/>
+          <colspec colname="Description" colwidth="2*"/>
 
           <tbody>
             <row>
-              <entry><literal>device
-              &lt;vifName&gt;,&lt;ifaceName&gt;[/{t|r|d}][,&lt;addr&gt;...]</literal></entry>
+              <entry><literal>device</literal>
+            <sbr/><literal>&lt;vifName&gt;,&lt;ifaceName&gt;</literal>
+            <sbr/><literal>[/{t|r|d}][,&lt;addr&gt;...]</literal></entry>
               <entry>Create a virtual SMF interface (vif) associated with one
               or more physical interfaces. Optional flags on
               &lt;<literal>ifaceName</literal>&gt; are
@@ -1345,8 +2093,10 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
               listed after the interface name.</entry>
             </row>
             <row>
-              <entry><literal>cid
-              &lt;vifName&gt;,&lt;iface1&gt;[/{t|r|d}][,&lt;iface2&gt;...]</literal></entry>
+              <entry><literal>cid</literal>
+            <sbr/><literal>&lt;vifName&gt;,</literal>
+            <sbr/><literal>&lt;iface1&gt;[/{t|r|d}][,</literal>
+            <sbr/><literal>&lt;iface2&gt;...]</literal></entry>
               <entry>Add or remove elements of a Composite Interface Device
               associated with an SMF virtual interface.</entry>
             </row>
@@ -1391,13 +2141,14 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
         <title>VRF Commands</title>
 
         <tgroup cols="2">
-          <colspec colname="Command" colwidth="1*"/>
-          <colspec colname="Description" colwidth="2.5*"/>
+          <colspec colname="Command" colwidth="1.5*"/>
+          <colspec colname="Description" colwidth="2*"/>
 
           <tbody>
             <row>
-              <entry><literal>vrf
-              &lt;vrf-name&gt;,[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</literal></entry>
+              <entry><literal>vrf</literal>
+            <sbr/><literal>&lt;vrf-name&gt;,</literal>
+            <sbr/><literal>[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</literal></entry>
               <entry>Associate one or more interfaces with the named VRF. An
               optional numeric VRF identifier may be supplied.</entry>
             </row>
@@ -1424,8 +2175,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
         <title>Configuration Commands</title>
 
         <tgroup cols="2">
-          <colspec colname="Command" colwidth="1*"/>
-          <colspec colname="Description" colwidth="2.5*"/>
+          <colspec colname="Command" colwidth="1.5*"/>
+          <colspec colname="Description" colwidth="2*"/>
 
           <tbody>
             <row>
@@ -1468,14 +2219,14 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
         <title>Remote-only Commands</title>
 
         <tgroup cols="2">
-          <colspec colname="Command" colwidth="1*"/>
+          <colspec colname="Command" colwidth="1.5*"/>
 
-          <colspec colname="Description" colwidth="2.5*"/>
+          <colspec colname="Description" colwidth="2*"/>
 
           <tbody>
             <row>
-              <entry><literal>selectorMac &lt;binary
-              macAddrArray&gt;</literal></entry>
+              <entry><literal>selectorMac</literal>
+            <sbr/><literal>&lt;binary macAddrArray&gt;</literal></entry>
 
               <entry>This command can be used by external processes (e.g.,
               <application>nrlolsrd</application>) to control
@@ -1491,8 +2242,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
             </row>
 
             <row>
-              <entry><literal>neighborMac &lt;binary
-              macAddrArray&gt;</literal></entry>
+              <entry><literal>neighborMac</literal>
+            <sbr/><literal>&lt;binary macAddrArray&gt;</literal></entry>
 
               <entry>This command can be used by external processes (e.g.,
               <application>nrlolsrd</application>) to control
@@ -1508,8 +2259,8 @@ nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting
             </row>
 
             <row>
-              <entry><literal>mneBlockMac &lt;binary
-              macAddrArray&gt;</literal></entry>
+              <entry><literal>mneBlockMac</literal>
+            <sbr/><literal>&lt;binary macAddrArray&gt;</literal></entry>
 
               <entry>This command enables the
               <application>nrlsmf</application> process to be compatible with
