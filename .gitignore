@@ -9,6 +9,10 @@ makefiles/nrlsmf
 # generated documentation site bundle
 doc/site/
 
+# python
+__pycache__/
+*.pyc
+
 # object files
 *.o
 
