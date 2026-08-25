@@ -53,6 +53,9 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef LINUX
+#include <linux/neighbour.h>
+#endif
 #include <sstream>
 #include <vector>
 #include <tuple>
@@ -195,6 +198,19 @@ class SmfApp : public ProtoApp
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
+
+        static bool OnNeighborDump(unsigned int         ifIndex,
+                                   const ProtoAddress&  dst,
+                                   const ProtoAddress&  lladdr,
+                                   unsigned short       ndmState,
+                                   void*                userData);
+        void DumpLearnedTunnelNeighbors(Smf::Interface& iface);
+        void ClearLearnedTunnelNeighbors(Smf::Interface& iface);
+        void UpdateLearnedTunnelPeer(Smf::Interface&     iface,
+                                     const ProtoAddress& overlay,
+                                     const ProtoAddress& underlay,
+                                     unsigned short      ndmState,
+                                     bool                deleted);
 
         void DisplayGroups();
 
@@ -1152,7 +1168,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+leave",           "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
     "+load",            "<configFile>   : load nrlsmf JSON configuration file",
     "+log",             "<logFile>      : debug log file",
-    "+map",             "<iface>,<localAddr>[,<remoteAddr>] : maps tunnel endpoint information (repeat per mGRE unicast peer for overlay multicast inject)",
+    "+map",             "<iface>,<localAddr>[,<remoteAddr>|dynamic] : map tunnel endpoints (0.0.0.0 = wildcard remote; dynamic = learn peers from kernel neigh)",
     "+merge",           "<ifaceList>  : forward _among_ all iface's listed",
     "+push",            "<srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed",
     "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
@@ -3121,20 +3137,35 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             return false;
         }
         addrText = tk.GetNextItem();
+        bool dynamicLearn = false;
         ProtoAddress remoteAddr;
-        if ((NULL != addrText) && !remoteAddr.ResolveFromString(addrText))
+        if ((NULL != addrText) && (0 == strcmp(addrText, "dynamic")))
+        {
+            dynamicLearn = true;
+        }
+        else if ((NULL != addrText) && !remoteAddr.ResolveFromString(addrText))
         {
             PLOG(PL_ERROR, "OnCommand(%s) error: invalid remote address \"%s\"\n", cmd, addrText);
             return false;
         }
         TRACE("mapping GRE local:%s", localAddr.GetHostString());
-        TRACE(" remote:%s\n", remoteAddr.GetHostString());
+        if (dynamicLearn)
+            TRACE(" remote:dynamic\n");
+        else
+            TRACE(" remote:%s\n", remoteAddr.GetHostString());
         if (map)
         {
-            if (remoteAddr.IsValid())
+            if (dynamicLearn)
+            {
+                iface->SetTunnelLocalAddress(localAddr);
+                iface->SetTunnelLearnDynamic(true);
+                DumpLearnedTunnelNeighbors(*iface);
+            }
+            else if (remoteAddr.IsValid())
             {
                 // Multiple map commands with different remotes record multiple
                 // peers (mGRE overlay multicast inject destinations).
+                // 0.0.0.0 is the kernel wildcard remote (not a send dest).
                 iface->SetTunnelLocalAddress(localAddr);
                 iface->SetTunnelRemoteAddress(remoteAddr);
                 if (!smf.AddTunnelInfo(iface->GetIndex(), localAddr, remoteAddr))
@@ -3148,6 +3179,11 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 PLOG(PL_ERROR, "OnCommand(%s) error: Smf::AddOwnAddress() failed\n", cmd);
                 return false;
             }
+        }
+        else if (dynamicLearn)
+        {
+            iface->SetTunnelLearnDynamic(false);
+            ClearLearnedTunnelNeighbors(*iface);
         }
         else if (remoteAddr.IsValid())
         {
@@ -4176,6 +4212,120 @@ bool SmfApp::LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* iface
     }
     return true;
 }  // end SmfApp::LeaveUnderlayGroup()
+
+static bool NeighStateUsable(unsigned short state)
+{
+#ifdef NUD_PERMANENT
+    return (0 != (state & (NUD_PERMANENT | NUD_REACHABLE | NUD_STALE |
+                           NUD_DELAY | NUD_PROBE | NUD_NOARP)));
+#else
+    return (0 != state);
+#endif
+}
+
+bool SmfApp::OnNeighborDump(unsigned int         ifIndex,
+                            const ProtoAddress&  dst,
+                            const ProtoAddress&  lladdr,
+                            unsigned short       ndmState,
+                            void*                userData)
+{
+    SmfApp* app = static_cast<SmfApp*>(userData);
+    Smf::Interface* iface = app->smf.GetInterface(ifIndex);
+    if ((NULL == iface) || !iface->GetTunnelLearnDynamic())
+        return true;
+    app->UpdateLearnedTunnelPeer(*iface, dst, lladdr, ndmState, false);
+    return true;
+}  // end SmfApp::OnNeighborDump()
+
+void SmfApp::DumpLearnedTunnelNeighbors(Smf::Interface& iface)
+{
+    if (!ProtoNet::GetInterfaceNeighbors(iface.GetIndex(), OnNeighborDump, this))
+        PLOG(PL_WARN, "SmfApp::DumpLearnedTunnelNeighbors() warning: neighbor dump failed for %s\n",
+             iface.GetNameStr());
+}  // end SmfApp::DumpLearnedTunnelNeighbors()
+
+void SmfApp::ClearLearnedTunnelNeighbors(Smf::Interface& iface)
+{
+    const ProtoAddress& local = iface.GetTunnelLocalAddress();
+    ProtoAddress overlay;
+    ProtoAddressList::Iterator it(iface.AccessLearnedOverlays());
+    while (it.GetNextAddress(overlay))
+    {
+        const ProtoAddress* underlay =
+            static_cast<const ProtoAddress*>(iface.AccessLearnedOverlays().GetUserData(overlay));
+        if ((NULL != underlay) && local.IsValid())
+            smf.ClearTunnelSource(local, *underlay, false, true);
+    }
+    iface.ClearLearnedOverlays();
+}  // end SmfApp::ClearLearnedTunnelNeighbors()
+
+void SmfApp::UpdateLearnedTunnelPeer(Smf::Interface&     iface,
+                                     const ProtoAddress& overlay,
+                                     const ProtoAddress& underlay,
+                                     unsigned short      ndmState,
+                                     bool                deleted)
+{
+    if (!overlay.IsValid() || !overlay.IsUnicast())
+        return;
+    const ProtoAddress& local = iface.GetTunnelLocalAddress();
+    if (!local.IsValid())
+        return;
+
+    const bool usable = !deleted &&
+                        underlay.IsValid() && underlay.IsUnicast() &&
+                        !underlay.HostIsEqual(local) &&
+                        NeighStateUsable(ndmState);
+
+    ProtoAddressList& learned = iface.AccessLearnedOverlays();
+    const ProtoAddress* oldUnderlay =
+        static_cast<const ProtoAddress*>(learned.GetUserData(overlay));
+
+    if (!usable)
+    {
+        if (NULL != oldUnderlay)
+        {
+            smf.ClearTunnelSource(local, *oldUnderlay, false, true);
+            delete const_cast<ProtoAddress*>(oldUnderlay);
+            learned.Remove(overlay);
+        }
+        return;
+    }
+
+    if ((NULL != oldUnderlay) && oldUnderlay->HostIsEqual(underlay))
+        return;  // already have this mapping
+
+    if (NULL != oldUnderlay)
+    {
+        smf.ClearTunnelSource(local, *oldUnderlay, false, true);
+        delete const_cast<ProtoAddress*>(oldUnderlay);
+        learned.Remove(overlay);
+    }
+
+    ProtoAddress* stored = new ProtoAddress(underlay);
+    if (NULL == stored)
+    {
+        PLOG(PL_ERROR, "SmfApp::UpdateLearnedTunnelPeer() new ProtoAddress error: %s\n", GetErrorString());
+        return;
+    }
+    if (!learned.Insert(overlay, stored))
+    {
+        PLOG(PL_ERROR, "SmfApp::UpdateLearnedTunnelPeer() error inserting learned overlay %s\n",
+             overlay.GetHostString());
+        delete stored;
+        return;
+    }
+    if (!smf.AddTunnelInfo(iface.GetIndex(), local, underlay, false, true))
+    {
+        PLOG(PL_ERROR, "SmfApp::UpdateLearnedTunnelPeer() AddTunnelInfo() failed for %s\n",
+             underlay.GetHostString());
+        learned.Remove(overlay);
+        delete stored;
+        return;
+    }
+    PLOG(PL_DEBUG, "SmfApp::UpdateLearnedTunnelPeer() %s overlay %s",
+         iface.GetNameStr(), overlay.GetHostString());
+    PLOG(PL_DEBUG, " -> underlay %s\n", underlay.GetHostString());
+}  // end SmfApp::UpdateLearnedTunnelPeer()
 
 // This method gets (creates as needed) and configures an interface group
 Smf::InterfaceGroup* SmfApp::GetInterfaceGroup(const char*         groupName,
@@ -7602,6 +7752,19 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
 
             unsigned int ifIndex = theEvent.GetInterfaceIndex();
             const char* ifName = theEvent.GetInterfaceName();
+
+            if ((ProtoNet::Monitor::Event::IFACE_NEIGH_NEW == theEvent.GetType()) ||
+                (ProtoNet::Monitor::Event::IFACE_NEIGH_DELETE == theEvent.GetType()))
+            {
+                Smf::Interface* neighIface = smf.GetInterface(ifIndex);
+                if ((NULL != neighIface) && neighIface->GetTunnelLearnDynamic())
+                {
+                    UpdateLearnedTunnelPeer(*neighIface, theEvent.GetAddress(),
+                                            theEvent.GetAuxAddress(), theEvent.GetFlags(),
+                                            ProtoNet::Monitor::Event::IFACE_NEIGH_DELETE == theEvent.GetType());
+                }
+                continue;
+            }
 
             // Is this an interface we care about?
             // a) Is it one of our interfaces?

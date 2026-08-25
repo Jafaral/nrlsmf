@@ -79,6 +79,7 @@ Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
    sent_count(0), retr_count(0), recv_count(0),
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
+    tunnel_learn_dynamic = false;
 }
 
 Smf::Interface::~Interface()
@@ -131,8 +132,22 @@ void Smf::Interface::Destroy()
     assoc_source_list.Destroy();  // this deletes the items which also removes them from the sources' target lists
     // Destroy our target list
     assoc_target_list.Destroy();
+    ClearLearnedOverlays();
 
 }  // end Smf::Interface::Destroy()
+
+void Smf::Interface::ClearLearnedOverlays()
+{
+    ProtoAddress overlay;
+    ProtoAddressList::Iterator it(learned_overlays);
+    while (it.GetNextAddress(overlay))
+    {
+        const ProtoAddress* underlay =
+            static_cast<const ProtoAddress*>(learned_overlays.GetUserData(overlay));
+        delete const_cast<ProtoAddress*>(underlay);
+    }
+    learned_overlays.Destroy();
+}  // end Smf::Interface::ClearLearnedOverlays()
 
 bool Smf::Interface::AddAssociate(InterfaceGroup& ifaceGroup, Interface& iface)
 {

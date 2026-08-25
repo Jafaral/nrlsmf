@@ -110,7 +110,7 @@ class Smf
                               const ProtoAddress&   localAddr,
                               const ProtoAddress*   remoteAddr = NULL,
                               bool                  mapped = false)
-                  : iface_index(ifaceIndex), local_addr(localAddr), is_mapped(mapped)
+                  : iface_index(ifaceIndex), local_addr(localAddr), is_mapped(mapped), is_learned(false)
                 {
                     // address_info_key is tuple of [remoteAddr]localAddr  (i.e. remoteAddr is optional)
                     unsigned int len = 0;
@@ -133,6 +133,10 @@ class Smf
                 unsigned int GetMaskLength() const {return local_mask_len;}
                 const ProtoAddress& GetLocalAddress() const {return local_addr;}
                 const ProtoAddress& GetRemoteAddress() const {return remote_addr;}
+                void SetMapped(bool state) {is_mapped = state;}
+                bool IsMapped() const {return is_mapped;}
+                void SetLearned(bool state) {is_learned = state;}
+                bool IsLearned() const {return is_learned;}
 
             private:
                // Required ProtoTreeItem overrides
@@ -143,8 +147,8 @@ class Smf
                 ProtoAddress local_addr;
                 unsigned int local_mask_len;
                 ProtoAddress remote_addr;             // invalid for non-tunnels, INADDR_ANY for mGRE tunnels
-                bool         is_mapped;               // false for interfaces assigned to the interface, true for "mapped" association
-                                                      // (stored but not yet used for lookup or policy)
+                bool         is_mapped;               // true for explicit "map" command
+                bool         is_learned;              // true for kernel-neigh learned remotes (map ...,dynamic)
                 char         address_info_key[16+16]; // big enough for IPv6
                 unsigned int address_info_size;       // in bits
         };  // end class Smf::InterfaceInfo
@@ -276,22 +280,36 @@ class Smf
         unsigned int GetInterfaceIndex(const ProtoAddress& addr) const
             {return iface_info_table.GetIndex(addr);}
 
-        bool AddTunnelInfo(unsigned int ifaceIndex, const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
+        bool AddTunnelInfo(unsigned int ifaceIndex, const ProtoAddress& localAddr, const ProtoAddress& remoteAddr,
+                           bool mapped = true, bool learned = false)
         {
             TRACE("mapping tunnel addrs local:%s", localAddr.GetHostString());
             TRACE(" remote:%s\n", remoteAddr.GetHostString());
-            InterfaceInfo* ifaceInfo =  iface_info_table.InsertIndex(ifaceIndex, localAddr, &remoteAddr, true);
+            InterfaceInfo* ifaceInfo =  iface_info_table.InsertIndex(ifaceIndex, localAddr, &remoteAddr, mapped);
             if (NULL == ifaceInfo)
             {
                 PLOG(PL_ERROR, "Smf::AddTunnelInfo() iface_info_table.InsertIndex() failed\n");
                 return false;
             }
+            if (mapped) ifaceInfo->SetMapped(true);
+            if (learned) ifaceInfo->SetLearned(true);
             unsigned int maskLen = ProtoNet::GetInterfaceAddressMask(ifaceIndex, localAddr);
             ifaceInfo->SetMaskLength(maskLen);
             return true;
         }
         void RemoveTunnelInfo(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
-            {iface_info_table.RemoveAddress(localAddr, &remoteAddr);}
+            {ClearTunnelSource(localAddr, remoteAddr, true, true);}
+        void ClearTunnelSource(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr,
+                               bool mapped, bool learned)
+        {
+            InterfaceInfo* info = iface_info_table.FindInfo(localAddr, remoteAddr);
+            if (NULL == info)
+                return;
+            if (mapped) info->SetMapped(false);
+            if (learned) info->SetLearned(false);
+            if (!info->IsMapped() && !info->IsLearned())
+                iface_info_table.RemoveAddress(localAddr, &remoteAddr);
+        }
 
         unsigned int GetTunnelIndex(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr) const
         {
@@ -415,6 +433,13 @@ class Smf
                     {tunnel_remote_addr = addr;}
                 const ProtoAddress& GetTunnelRemoteAddress() const
                     {return tunnel_remote_addr;}
+                void SetTunnelLearnDynamic(bool state)
+                    {tunnel_learn_dynamic = state;}
+                bool GetTunnelLearnDynamic() const
+                    {return tunnel_learn_dynamic;}
+                ProtoAddressList& AccessLearnedOverlays()
+                    {return learned_overlays;}
+                void ClearLearnedOverlays();
                 bool IsGRE() const
                     {return tunnel_local_addr.IsValid();}
 
@@ -688,6 +713,8 @@ class Smf
                 ProtoAddressList                      addr_list;     // list of IP addresses of the interface
                 ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint
                 ProtoAddress                          tunnel_remote_addr;
+                bool                                  tunnel_learn_dynamic; // map <iface>,<local>,dynamic
+                ProtoAddressList                      learned_overlays;  // overlay neigh dst -> underlay (userData)
                 ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation
                 std::string                           if_name;
                 bool                                  resequence;
