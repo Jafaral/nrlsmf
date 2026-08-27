@@ -187,6 +187,7 @@ for name, cfg in ROUTERS.items():
         "nrlsmf debug 4 "
         f"instance smf-{name} "
         f"add overlay,cf,eth1,{GRE_DEV} "
+        f"layered {GRE_DEV} "
         f"{maps} "
         "&> nrlsmf-mgre.log &",
     )
@@ -228,6 +229,7 @@ step(
     "nrlsmf debug 4 "
     "instance smf-r0 "
     f"add overlay,cf,eth1,{GRE_DEV} "
+    f"layered {GRE_DEV} "
     f"map {GRE_DEV},{ROUTERS['r0']['underlay']},dynamic "
     "&> nrlsmf-mgre-dynamic.log &",
 )

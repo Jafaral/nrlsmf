@@ -1,0 +1,77 @@
+# Five GRE/mGRE routers with an underlay router between the LANs,
+# plus an application host off each SMF router.
+#
+#        h0 -- r0 -- lan0 --\     mcast-capable (u0 rmerge)
+#        h1 -- r1 -- lan1 ---\
+#        h2 -- r2 -- lan2 ---- u0
+#        h3 -- r3 -- lan3 ---/     unicast-only (no underlay mcast)
+#        h4 -- r4 -- lan4 --/
+#
+# u0 routes unicast among all five LANs. Underlay multicast is only
+# flooded among lan0..lan2 (r0/r1/r2). r3 and r4 stay unicast-only.
+topology:
+  networks:
+    - name: lan0
+    - name: lan1
+    - name: lan2
+    - name: lan3
+    - name: lan4
+    - name: lanh0
+    - name: lanh1
+    - name: lanh2
+    - name: lanh3
+    - name: lanh4
+  nodes:
+    - name: u0
+      kind: frr
+      connections:
+        - to: lan0
+        - to: lan1
+        - to: lan2
+        - to: lan3
+        - to: lan4
+    - name: h0
+      kind: host
+      connections:
+        - to: lanh0
+    - name: h1
+      kind: host
+      connections:
+        - to: lanh1
+    - name: h2
+      kind: host
+      connections:
+        - to: lanh2
+    - name: h3
+      kind: host
+      connections:
+        - to: lanh3
+    - name: h4
+      kind: host
+      connections:
+        - to: lanh4
+    - name: r0
+      kind: frr
+      connections:
+        - to: lan0
+        - to: lanh0
+    - name: r1
+      kind: frr
+      connections:
+        - to: lan1
+        - to: lanh1
+    - name: r2
+      kind: frr
+      connections:
+        - to: lan2
+        - to: lanh2
+    - name: r3
+      kind: frr
+      connections:
+        - to: lan3
+        - to: lanh3
+    - name: r4
+      kind: frr
+      connections:
+        - to: lan4
+        - to: lanh4

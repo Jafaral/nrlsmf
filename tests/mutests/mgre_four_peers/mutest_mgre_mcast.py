@@ -10,7 +10,7 @@ Topology (shared with other tests in this directory):
 
 What "multicast-underlay mGRE" means here
 -------------------------------------------
-The other two mGRE modes in this directory (mutest_mgre.py and
+The other two mGRE modes in this directory (mutest_mgre_static.py and
 mutest_mgre_nhrp.py) both solve "which peer does this packet go to" by
 building a table -- static or dynamic -- that resolves each peer's
 overlay address to a specific underlay unicast address, then sending
@@ -44,7 +44,7 @@ What this example covers
   plus mgre0, with `ujoin` on each router's underlay eth0.
 * Overlay multicast from host h0, received at h1/h2/h3.
 
-See mutest_gre_p2p.py (point-to-point), mutest_mgre.py (static NBMA
+See mutest_gre_p2p.py (point-to-point), mutest_mgre_static.py (static NBMA
 mGRE), mutest_mgre_nhrp.py (NHRP-resolved mGRE), and
 mutest_gre_external.py (external/metadata GRE) for the other GRE
 tunnel modes.
@@ -220,6 +220,7 @@ for name in ROUTERS:
         "nrlsmf debug 4 "
         f"instance smf-{name}-mcast "
         f"add overlay,cf,eth1,{GRE_DEV} "
+        f"layered {GRE_DEV} "
         f"ujoin {UNDERLAY_MCAST},eth0 "
         "&> nrlsmf-mgre-mcast.log &",
     )

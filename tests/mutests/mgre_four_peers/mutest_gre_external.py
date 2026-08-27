@@ -57,7 +57,7 @@ What this example covers
 * Overlay: one external GRE device (gre1) per router, sharing a single
   172.16.0.0/24 overlay subnet, with per-destination lwtunnel routes
   providing the encapsulation parameters to reach each other router --
-  the "external" analogue of the NBMA table in mutest_mgre.py. gre1
+  the "external" analogue of the NBMA table in mutest_mgre_static.py. gre1
   is used because the kernel's built-in fallback gre0 cannot be turned
   into a collect-md device (same reason mutest_mgre_mcast.py uses mgre0).
 * nrlsmf classic flooding (`cf`) on each router's host LAN plus gre1:
@@ -174,7 +174,7 @@ for name, cfg in ROUTERS.items():
     # Per-destination lwtunnel routes supply the encapsulation
     # parameters that would otherwise live on the interface. This is
     # the "external" analogue of the ip-neigh NBMA table in
-    # mutest_mgre.py -- same job, different mechanism.
+    # mutest_mgre_static.py -- same job, different mechanism.
     for other, ocfg in ROUTERS.items():
         if other == name:
             continue
@@ -231,6 +231,7 @@ for name in ROUTERS:
         "nrlsmf debug 4 "
         f"instance smf-{name}-ext-nomap "
         f"add overlay,cf,eth1,{GRE_DEV} "
+        f"layered {GRE_DEV} "
         "&> nrlsmf-ext-nomap.log &",
     )
     wait_step(
@@ -284,6 +285,7 @@ for name, cfg in ROUTERS.items():
         "nrlsmf debug 4 "
         f"instance smf-{name}-ext "
         f"add overlay,cf,eth1,{GRE_DEV} "
+        f"layered {GRE_DEV} "
         f"{maps} "
         "&> nrlsmf-ext.log &",
     )

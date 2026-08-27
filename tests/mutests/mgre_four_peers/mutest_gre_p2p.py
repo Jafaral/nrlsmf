@@ -36,7 +36,7 @@ What this example covers
   No `map` command is used: endpoint addressing is auto-discovered
   by nrlsmf from the kernel for an ordinary GRE interface.
 
-See mutest_mgre.py (static NBMA mGRE), mutest_mgre_nhrp.py (NHRP-resolved
+See mutest_mgre_static.py (static NBMA mGRE), mutest_mgre_nhrp.py (NHRP-resolved
 mGRE), mutest_mgre_mcast.py (multicast-underlay mGRE), and
 mutest_gre_external.py (external/metadata GRE) for the multipoint
 variants, where -- unlike here -- resolving "which peer" is the whole
@@ -190,6 +190,7 @@ for name in UNDERLAY:
         "nrlsmf debug 4 "
         f"instance smf-{name}-p2p "
         f"add overlay,cf,eth1,{GRE_DEV} "
+        f"layered {GRE_DEV} "
         "&> nrlsmf-gre-p2p.log &",
     )
     wait_step(
