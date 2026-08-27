@@ -198,6 +198,11 @@ class SmfApp : public ProtoApp
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
+        bool GreDeviceIsUnicastMgre(Smf::Interface& iface);
+        bool MaybeEnableUnderlayGreDemux(const ProtoAddress& groupAddr);
+        bool EnableUnderlayGreDemux(const ProtoAddress& groupAddr, const char* ifaceName);
+        void OnUnderlayGreCapture(ProtoChannel&              theChannel,
+                                  ProtoChannel::Notification notifyType);
 
         static bool OnNeighborDump(unsigned int         ifIndex,
                                    const ProtoAddress&  dst,
@@ -444,6 +449,9 @@ class SmfApp : public ProtoApp
         ProtoTimer                  igmp_query_timer;
 #endif // ELASTIC_MCAST
         ProtoSocket                 underlay_group_socket;  // used for joining mGRE underlay groups
+        ProtoAddressList            underlay_join_groups;   // ujoin group -> underlay ifindex
+        ProtoCap*                   underlay_gre_cap;       // GRE-in-mcast capture (unicast mGRE only)
+        ProtoAddressList            underlay_gre_groups;    // groups that need capture demux
 #ifdef ADAPTIVE_ROUTING
         SmartController             smart_controller;
 #endif // ADAPTIVE_ROUTING
@@ -671,8 +679,8 @@ SmfApp::CidElement* SmfApp::InterfaceMechanism::GetNextTxElement(bool autoReset)
 bool SmfApp::InterfaceMechanism::SendGrePayload(ProtoCap& cap, char* frame, unsigned int frameLength, unsigned int& numBytes)
 {
     // GRE inject is inner IP only. A wildcard-remote mGRE interface has no
-    // single kernel dest; overlay multicast is sent once per unicast remote
-    // recorded in Smf::InterfaceInfoTable (typically via multiple map commands).
+    // single kernel dest; overlay multicast is sent once per mapped remote
+    // (unicast peers and/or an underlay multicast group).
     numBytes = frameLength - 14;
     char* payload = frame + 14;
     const bool overlayMcast = (0 != (0x01 & ((UINT8)frame[0])));
@@ -1053,6 +1061,7 @@ SmfApp::SmfApp()
    igmp_controller(GetTimerMgr(), smf),
 #endif // ELASTIC_MCAST
    underlay_group_socket(ProtoSocket::UDP),
+   underlay_gre_cap(NULL),
 #ifdef ADAPTIVE_ROUTING
    smart_controller(GetTimerMgr()),
 #endif  // ADAPTIVE_ROUTING
@@ -1692,6 +1701,14 @@ void SmfApp::OnShutdown()
     if (control_pipe.IsOpen()) control_pipe.Close();
     if (server_pipe.IsOpen()) server_pipe.Close();
     if (underlay_group_socket.IsOpen()) underlay_group_socket.Close();
+    underlay_join_groups.Destroy();
+    if (NULL != underlay_gre_cap)
+    {
+        underlay_gre_cap->Close();
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+    }
+    underlay_gre_groups.Destroy();
 
     Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
     Smf::Interface* iface;
@@ -3164,13 +3181,22 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             else if (remoteAddr.IsValid())
             {
                 // Multiple map commands with different remotes record multiple
-                // peers (mGRE overlay multicast inject destinations).
+                // inject destinations for overlay multicast (unicast peers
+                // and/or an underlay multicast group).
                 // 0.0.0.0 is the kernel wildcard remote (not a send dest).
                 iface->SetTunnelLocalAddress(localAddr);
                 iface->SetTunnelRemoteAddress(remoteAddr);
                 if (!smf.AddTunnelInfo(iface->GetIndex(), localAddr, remoteAddr))
                 {
                     PLOG(PL_ERROR, "OnCommand(%s) error: Smf::AddTunnelInfo() failed\n", cmd);
+                    return false;
+                }
+                if (remoteAddr.IsMulticast() &&
+                    GreDeviceIsUnicastMgre(*iface) &&
+                    !MaybeEnableUnderlayGreDemux(remoteAddr))
+                {
+                    PLOG(PL_ERROR, "OnCommand(%s) error: underlay GRE demux failed for %s\n",
+                         cmd, remoteAddr.GetHostString());
                     return false;
                 }
             }
@@ -3188,6 +3214,16 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
         else if (remoteAddr.IsValid())
         {
             smf.RemoveTunnelInfo(localAddr, remoteAddr);
+            if (remoteAddr.IsMulticast())
+            {
+                underlay_gre_groups.Remove(remoteAddr);
+                if (underlay_gre_groups.IsEmpty() && (NULL != underlay_gre_cap))
+                {
+                    underlay_gre_cap->Close();
+                    delete underlay_gre_cap;
+                    underlay_gre_cap = NULL;
+                }
+            }
         }
         else
         {
@@ -4199,7 +4235,9 @@ bool SmfApp::JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceN
         PLOG(PL_ERROR, "SmfApp::JoinUnderlayGroup() error: group join failed!");
         return false;
     }
-    return true;
+    unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+    underlay_join_groups.Insert(groupAddr, INT2VOIDP(ifaceIndex));
+    return MaybeEnableUnderlayGreDemux(groupAddr);
 }  // end SmfApp::JoinUnderlayGroup()
 
 bool SmfApp::LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName)
@@ -4210,8 +4248,163 @@ bool SmfApp::LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* iface
         PLOG(PL_ERROR, "SmfApp::LeaveUnderlayGroup() error: group leave failed!");
         return false;
     }
+    underlay_join_groups.Remove(groupAddr);
+    underlay_gre_groups.Remove(groupAddr);
+    if (underlay_gre_groups.IsEmpty() && (NULL != underlay_gre_cap))
+    {
+        underlay_gre_cap->Close();
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+    }
     return true;
 }  // end SmfApp::LeaveUnderlayGroup()
+
+bool SmfApp::GreDeviceIsUnicastMgre(Smf::Interface& iface)
+{
+    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface.GetExtension());
+    if ((NULL == mech) || (NULL == mech->GetPrincipalElement()))
+        return false;
+    const ProtoAddress& kernRemote =
+        mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
+    if (!kernRemote.IsValid() || kernRemote.IsUnspecified())
+        return true;
+    return kernRemote.IsUnicast();
+}  // end SmfApp::GreDeviceIsUnicastMgre()
+
+bool SmfApp::MaybeEnableUnderlayGreDemux(const ProtoAddress& groupAddr)
+{
+    if (!underlay_join_groups.Contains(groupAddr))
+        return true;
+    unsigned int greIndex = smf.FindMappedIndexForRemote(groupAddr);
+    if (0 == greIndex)
+        return true;
+    Smf::Interface* greIface = smf.GetInterface(greIndex);
+    if ((NULL == greIface) || !GreDeviceIsUnicastMgre(*greIface))
+        return true;
+    unsigned int ifIndex =
+        (unsigned int)(uintptr_t)underlay_join_groups.GetUserData(groupAddr);
+    char ifaceName[Smf::IF_NAME_MAX + 1];
+    ifaceName[Smf::IF_NAME_MAX] = '\0';
+    if (0 == ProtoNet::GetInterfaceName(ifIndex, ifaceName, Smf::IF_NAME_MAX))
+    {
+        PLOG(PL_ERROR, "SmfApp::MaybeEnableUnderlayGreDemux() error: no name for ifIndex %u\n",
+             ifIndex);
+        return false;
+    }
+    return EnableUnderlayGreDemux(groupAddr, ifaceName);
+}  // end SmfApp::MaybeEnableUnderlayGreDemux()
+
+bool SmfApp::EnableUnderlayGreDemux(const ProtoAddress& groupAddr, const char* ifaceName)
+{
+    underlay_gre_groups.Insert(groupAddr);
+    if (NULL != underlay_gre_cap)
+        return true;
+    underlay_gre_cap = ProtoCap::Create();
+    if (NULL == underlay_gre_cap)
+    {
+        PLOG(PL_ERROR, "SmfApp::EnableUnderlayGreDemux() ProtoCap::Create() error\n");
+        return false;
+    }
+    underlay_gre_cap->SetListener(this, &SmfApp::OnUnderlayGreCapture);
+    underlay_gre_cap->SetNotifier(static_cast<ProtoChannel::Notifier*>(&dispatcher));
+    if (!underlay_gre_cap->Open(ifaceName))
+    {
+        PLOG(PL_ERROR, "SmfApp::EnableUnderlayGreDemux() ProtoCap::Open(%s) error\n", ifaceName);
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+        return false;
+    }
+    if (!underlay_gre_cap->StartInputNotification())
+    {
+        PLOG(PL_ERROR, "SmfApp::EnableUnderlayGreDemux() StartInputNotification() error\n");
+        underlay_gre_cap->Close();
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+        return false;
+    }
+    return true;
+}  // end SmfApp::EnableUnderlayGreDemux()
+
+void SmfApp::OnUnderlayGreCapture(ProtoChannel&              theChannel,
+                                  ProtoChannel::Notification notifyType)
+{
+    if (ProtoChannel::NOTIFY_INPUT != notifyType)
+        return;
+    ProtoCap& cap = static_cast<ProtoCap&>(theChannel);
+    UINT32 alignedBuffer[BUFFER_MAX/sizeof(UINT32)];
+    UINT16* ethBuffer = ((UINT16*)(alignedBuffer + 256)) + 1;
+    const unsigned int ETHER_BYTES_MAX = (BUFFER_MAX - 256 * sizeof(UINT32) - 2);
+    for (;;)
+    {
+        unsigned int numBytes = ETHER_BYTES_MAX;
+        ProtoCap::Direction direction;
+        if (!cap.Recv((char*)ethBuffer, numBytes, &direction))
+        {
+            PLOG(PL_ERROR, "SmfApp::OnUnderlayGreCapture() ProtoCap::Recv() error\n");
+            break;
+        }
+        if (0 == numBytes)
+            break;
+        if (ProtoCap::INBOUND != direction)
+            continue;
+
+        ProtoPktETH ethPkt((UINT32*)ethBuffer, ETHER_BYTES_MAX);
+        if (!ethPkt.InitFromBuffer(numBytes) || (ProtoPktETH::IP != ethPkt.GetType()))
+            continue;
+        ProtoPktIP ipPkt;
+        if (!ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(),
+                                  ethPkt.AccessPayload(),
+                                  ethPkt.GetPayloadLength()) ||
+            (4 != ipPkt.GetVersion()))
+            continue;
+        ProtoPktIPv4 ip4(ipPkt);
+        if (ProtoPktIP::GRE != ip4.GetProtocol())
+            continue;
+        ProtoAddress dst;
+        ip4.GetDstAddr(dst);
+        if (!underlay_gre_groups.Contains(dst))
+            continue;
+
+        unsigned int ipHdrLen = ip4.GetHeaderLength();
+        unsigned int greBytes = ethPkt.GetPayloadLength();
+        if (greBytes <= ipHdrLen)
+            continue;
+        greBytes -= ipHdrLen;
+        const UINT8* grePtr = (const UINT8*)ethPkt.AccessPayload() + ipHdrLen;
+        if (greBytes < 4)
+            continue;
+        unsigned int greHdrLen = 4;
+        if (0 != (grePtr[0] & 0x80)) greHdrLen += 4;  // checksum
+        if (0 != (grePtr[0] & 0x20)) greHdrLen += 4;  // key
+        if (0 != (grePtr[0] & 0x10)) greHdrLen += 4;  // sequence
+        if (greBytes <= greHdrLen)
+            continue;
+        unsigned int innerLen = greBytes - greHdrLen;
+        const UINT8* inner = grePtr + greHdrLen;
+
+        unsigned int greIndex = smf.FindMappedIndexForRemote(dst);
+        if (0 == greIndex)
+            continue;
+        Smf::Interface* greIface = smf.GetInterface(greIndex);
+        if (NULL == greIface)
+            continue;
+        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(greIface->GetExtension());
+        if ((NULL == mech) || (NULL == mech->GetPrincipalElement()))
+            continue;
+        ProtoCap& greCap = mech->GetPrincipalElement()->GetProtoCap();
+
+        UINT8 innerCopy[FRAME_SIZE_MAX];
+        if (innerLen > FRAME_SIZE_MAX)
+            continue;
+        memcpy(innerCopy, inner, innerLen);
+        memcpy((char*)ethBuffer + 14, innerCopy, innerLen);
+        ProtoPktETH outEth;
+        outEth.InitIntoBuffer(ethBuffer, 14 + innerLen);
+        outEth.SetType(ProtoPktETH::IP);
+        outEth.SetPayloadLength(innerLen);
+        HandleInboundPacket(alignedBuffer, 14 + innerLen, greCap);
+    }
+}  // end SmfApp::OnUnderlayGreCapture()
 
 static bool NeighStateUsable(unsigned short state)
 {

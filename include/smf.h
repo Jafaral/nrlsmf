@@ -353,8 +353,9 @@ class Smf
         InterfaceInfoTable& AccessInterfaceInfoTable()
             {return iface_info_table;}
 
-        // Unicast remotes from map (and P2P auto-discover). Used as GRE
-        // inject destinations for overlay multicast; skip 0.0.0.0 / mcast.
+        // Mapped remotes used as GRE inject destinations for overlay
+        // multicast: unicast peers and (optionally) an underlay multicast
+        // group. Skip 0.0.0.0 (kernel wildcard, not a send dest).
         void GetTunnelUnicastRemotes(unsigned int ifaceIndex, ProtoAddressList& dests)
         {
             InterfaceInfoTable::Iterator iterator(iface_info_table);
@@ -364,9 +365,25 @@ class Smf
                 if (info->GetIndex() != ifaceIndex)
                     continue;
                 const ProtoAddress& remote = info->GetRemoteAddress();
-                if (remote.IsValid() && remote.IsUnicast())
+                if (remote.IsValid() && (remote.IsUnicast() || remote.IsMulticast()))
                     dests.Insert(remote);
             }
+        }
+
+        unsigned int FindMappedIndexForRemote(const ProtoAddress& remote)
+        {
+            if (!remote.IsValid())
+                return 0;
+            InterfaceInfoTable::Iterator iterator(iface_info_table);
+            InterfaceInfo* info;
+            while (NULL != (info = iterator.GetNextItem()))
+            {
+                if (info->IsMapped() &&
+                    info->GetRemoteAddress().IsValid() &&
+                    info->GetRemoteAddress().HostIsEqual(remote))
+                    return info->GetIndex();
+            }
+            return 0;
         }
 
         UINT16 GetIPv4LocalSequence(const ProtoAddress* dstAddr,
