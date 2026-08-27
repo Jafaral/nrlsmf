@@ -17,7 +17,9 @@ docs-site:
 	$(MAKE) -C doc pages
 
 install: elastic
-	sudo cp -u ./nrlsmf /usr/bin/nrlsmf
+	# Unlink first so a running nrlsmf does not cause ETXTBSY ("Text file busy").
+	sudo rm -f /usr/bin/nrlsmf
+	sudo cp -f ./nrlsmf /usr/bin/nrlsmf
 
 clean:
 	make -C makefiles -f Makefile.linux clean
