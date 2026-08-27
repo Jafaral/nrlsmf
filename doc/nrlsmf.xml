@@ -164,7 +164,10 @@ make -f Makefile.linux elastic</programlisting>
        [resequence {on|off}][ttl &lt;value&gt;][boost {on|off}]
        [debug &lt;debugLevel&gt;][log &lt;logFile&gt;]
 
-Run "nrlsmf -help" for the complete list of supported commands.</programlisting>
+Run "nrlsmf -help" for the complete list of supported commands.
+
+To send a command to an already-running instance:
+nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting>
       </informalexample></para>
 
     <sect2 id="ExampleUsage">
@@ -1612,6 +1615,17 @@ Run "nrlsmf -help" for the complete list of supported commands.</programlisting>
     used while on WinCE systems a semaphore is instantiated along with a
     corresponding registry entry mapping to a locally-bound UDP socket
     provides equivalent functionality.</para>
+
+    <para>The same <application>nrlsmf</application> binary can act as a
+    client against that socket. Invoke it as
+    "<literal>nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt;
+    [args...]</literal>" to send a runtime command and, for status queries
+    such as <literal>ping</literal>, <literal>stats</literal>,
+    <literal>info</literal>, and the <literal>json*</literal> variants, print
+    the reply. Configuration commands (for example
+    "<literal>nrlsmf --cli debug 2</literal>") are sent without waiting for a
+    response. Use "<literal>-i</literal>" when the target process was started
+    with a non-default <literal>instance</literal> name.</para>
   </sect1>
 
   <sect1>
