@@ -122,6 +122,14 @@ wait_step(
     desc="nrlsmf-merge.log contains merge group for eth0,eth1",
 )
 
+wait_step(
+    "r1",
+    "nrlsmf --cli ping",
+    match="pong",
+    desc="nrlsmf --cli ping returns pong",
+    timeout=10,
+)
+
 step(
     "h1",
     "iperf -u -T 4 -t 1000 -i 1 -b 8pps -l 1024 -e -c 239.0.0.1 &> iperf-client.log &",

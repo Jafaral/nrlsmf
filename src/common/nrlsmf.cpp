@@ -56,6 +56,10 @@
 #include <sstream>
 #include <vector>
 #include <tuple>
+#ifndef WIN32
+#include <sys/select.h>
+#include <sys/time.h>
+#endif
 
 #define FRR_PID_FILE_PATH "/var/run/frr/nrlsmf.pid"
 class SmfApp : public ProtoApp
@@ -93,6 +97,8 @@ class SmfApp : public ProtoApp
         bool ServerSend(const char* word, const char* value);
         bool OnCommand(const char* cmd, const char* val);
         static void Usage();
+        static void CliUsage();
+        static int RunControlClient(int argc, const char*const* argv);
 
         bool LoadConfig(const char* configPath);
         bool ProcessGroupConfig(ProtoJson::Object& groupConfig);
@@ -1033,6 +1039,7 @@ void SmfApp::Usage()
 {
     const char* const* nextCmd = CMD_LIST;
     fprintf(stderr, "Usage: nrlsmf [options]:\n");
+    fprintf(stderr, "       nrlsmf --cli [-i <instance>] <command> [args...]\n");
     while (*nextCmd) {
         const char* cmd = &(*nextCmd)[1];
         nextCmd++;
@@ -1169,8 +1176,244 @@ SmfApp::CmdType SmfApp::GetCmdType(const char* cmd)
     return type;
 }  // end SmfApp::GetCmdType()
 
+// Status/query verbs handled in OnControlMsg that reply on server_pipe.
+static const struct
+{
+    const char* name;
+    const char* help;
+    bool        elasticOnly;
+} kCliQueryCmds[] =
+{
+    { "ping",         "heartbeat; returns pong if nrlsmf is running", false },
+    { "stats",        "per-interface packet/flow counters (text table)", false },
+    { "jsonStats",    "same as stats, JSON", false },
+    { "info",         "interface groups (text table)", false },
+    { "jsonInfo",     "same as info, JSON", false },
+    { "jsonVersion",  "nrlsmf version as JSON", false },
+    { "interfaces",   "configured interfaces (text table)", false },
+    { "interfacesj",  "same as interfaces, JSON", false },
+    { "groups",       "elastic multicast groups (text)", true },
+    { "groupsj",      "same as groups, JSON", true },
+    { "brfgroups",    "brief elastic multicast groups (text)", true },
+    { "brfgroupsj",   "same as brfgroups, JSON", true },
+    { NULL, NULL, false }
+};
+
+static void CliQueryHelp()
+{
+    printf("Query / show commands:\n");
+    printf("  nrlsmf --cli [-i <instance>] <command>\n\n");
+    for (unsigned int i = 0; NULL != kCliQueryCmds[i].name; i++)
+    {
+        printf("  %-14s %s%s\n",
+               kCliQueryCmds[i].name,
+               kCliQueryCmds[i].help,
+               kCliQueryCmds[i].elasticOnly ? " (elastic build)" : "");
+    }
+    printf("\nConfiguration commands (debug, add, relay, map, ...) use the same\n"
+           "--cli syntax and do not return a reply. See \"nrlsmf help\".\n");
+}
+
+void SmfApp::CliUsage()
+{
+    fprintf(stderr,
+            "Usage: nrlsmf --cli [-i <instance>] <command> [args...]\n"
+            "       nrlsmf --cli [-i <instance>] ?\n"
+            "\n"
+            "Send a runtime command to a running nrlsmf instance via its\n"
+            "control socket (default instance \"%s\" -> /tmp/%s).\n"
+            "\n"
+            "Options:\n"
+            "  -i, --instance <name>  Target instance (default: %s)\n"
+            "  -h, --help             Show this help\n"
+            "  ?                      List query / show commands\n"
+            "\n"
+            "Examples:\n"
+            "  nrlsmf --cli ?\n"
+            "  nrlsmf --cli ping\n"
+            "  nrlsmf --cli stats\n"
+            "  nrlsmf --cli jsonInfo\n"
+            "  nrlsmf --cli debug 2\n"
+            "  nrlsmf --cli -i smf-r0 relay off\n",
+            DEFAULT_INSTANCE_NAME, DEFAULT_INSTANCE_NAME, DEFAULT_INSTANCE_NAME);
+}
+
+static bool CliExpectsReply(const char* cmd)
+{
+    if (NULL == cmd)
+        return false;
+    for (unsigned int i = 0; NULL != kCliQueryCmds[i].name; i++)
+    {
+        if (0 == strcmp(cmd, kCliQueryCmds[i].name))
+            return true;
+    }
+    return false;
+}
+
+static bool CliRecvWithTimeout(ProtoPipe& pipe, char* buffer, unsigned int& numBytes,
+                               unsigned int timeoutMs)
+{
+#ifndef WIN32
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(pipe.GetHandle(), &fds);
+    struct timeval tv;
+    tv.tv_sec = (time_t)(timeoutMs / 1000);
+    tv.tv_usec = (suseconds_t)((timeoutMs % 1000) * 1000);
+    int rc = select(pipe.GetHandle() + 1, &fds, NULL, NULL, &tv);
+    if (rc <= 0)
+        return false;
+#endif // !WIN32
+    return pipe.Recv(buffer, numBytes) && (numBytes > 0);
+}
+
+int SmfApp::RunControlClient(int argc, const char*const* argv)
+{
+    SetDebugLevel(PL_ERROR);
+
+    const char* instance = DEFAULT_INSTANCE_NAME;
+    int i = 2;
+    while (i < argc)
+    {
+        if ((0 == strcmp(argv[i], "-h")) || (0 == strcmp(argv[i], "--help")))
+        {
+            CliUsage();
+            return 0;
+        }
+        else if ((0 == strcmp(argv[i], "-i")) || (0 == strcmp(argv[i], "--instance")))
+        {
+            if ((i + 1) >= argc)
+            {
+                fprintf(stderr, "nrlsmf --cli: %s requires an instance name\n", argv[i]);
+                CliUsage();
+                return 1;
+            }
+            instance = argv[++i];
+            i++;
+        }
+        else if ('-' == argv[i][0])
+        {
+            fprintf(stderr, "nrlsmf --cli: unknown option %s\n", argv[i]);
+            CliUsage();
+            return 1;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    if (i >= argc)
+    {
+        CliUsage();
+        return 1;
+    }
+
+    if (0 == strcmp(argv[i], "?"))
+    {
+        CliQueryHelp();
+        return 0;
+    }
+
+    const char* cmd = argv[i];
+    char message[8192];
+    size_t used = 0;
+    message[0] = '\0';
+    for (int a = i; a < argc; a++)
+    {
+        size_t argLen = strlen(argv[a]);
+        if ((used + argLen + 2) >= sizeof(message))
+        {
+            fprintf(stderr, "nrlsmf --cli: command too long\n");
+            return 1;
+        }
+        if (used > 0)
+            message[used++] = ' ';
+        memcpy(message + used, argv[a], argLen);
+        used += argLen;
+        message[used] = '\0';
+    }
+
+    char listenName[64];
+#ifndef WIN32
+    snprintf(listenName, sizeof(listenName), "nrlsmf-cli-%d", (int)getpid());
+#else
+    snprintf(listenName, sizeof(listenName), "nrlsmf-cli-%u", (unsigned int)GetCurrentProcessId());
+#endif
+
+    ProtoPipe listenPipe(ProtoPipe::MESSAGE);
+    ProtoPipe smfPipe(ProtoPipe::MESSAGE);
+
+    if (!listenPipe.Listen(listenName))
+    {
+        fprintf(stderr, "nrlsmf --cli: unable to open reply pipe \"%s\"\n", listenName);
+        return 1;
+    }
+
+    if (!smfPipe.Connect(instance))
+    {
+        fprintf(stderr, "nrlsmf --cli: unable to connect to instance \"%s\" (is nrlsmf running?)\n",
+                instance);
+        listenPipe.Close();
+        return 1;
+    }
+
+    const bool wantsReply = CliExpectsReply(cmd);
+    if (wantsReply)
+    {
+        // Status replies are sent on server_pipe, not back to the requester.
+        // Register this process as the (temporary) controller so we receive them.
+        char startMsg[128];
+        snprintf(startMsg, sizeof(startMsg), "smfServerStart %s", listenName);
+        unsigned int numBytes = (unsigned int)strlen(startMsg) + 1;
+        if (!smfPipe.Send(startMsg, numBytes))
+        {
+            fprintf(stderr, "nrlsmf --cli: failed to send smfServerStart to instance \"%s\"\n",
+                    instance);
+            smfPipe.Close();
+            listenPipe.Close();
+            return 1;
+        }
+    }
+
+    unsigned int numBytes = (unsigned int)used + 1;
+    if (!smfPipe.Send(message, numBytes))
+    {
+        fprintf(stderr, "nrlsmf --cli: failed to send command to instance \"%s\"\n", instance);
+        smfPipe.Close();
+        listenPipe.Close();
+        return 1;
+    }
+
+    int exitStatus = 0;
+    if (wantsReply)
+    {
+        char reply[8192];
+        unsigned int replyLen = sizeof(reply);
+        if (!CliRecvWithTimeout(listenPipe, reply, replyLen, 2000))
+        {
+            fprintf(stderr, "nrlsmf --cli: timed out waiting for reply to \"%s\"\n", cmd);
+            exitStatus = 1;
+        }
+        else
+        {
+            fwrite(reply, 1, replyLen, stdout);
+            if ((0 == replyLen) || ('\n' != reply[replyLen - 1]))
+                fputc('\n', stdout);
+        }
+    }
+
+    smfPipe.Close();
+    listenPipe.Close();
+    return exitStatus;
+}  // end SmfApp::RunControlClient()
+
 bool SmfApp::OnStartup(int argc, const char*const* argv)
 {
+    // "--cli" is a client-mode switch, not a forwarding command.
+    if ((argc >= 2) && (0 == strcmp(argv[1], "--cli")))
+        exit(RunControlClient(argc, argv));
+
     if (!smf.Init())
     {
         PLOG(PL_FATAL, "SmfApp::OnStartup() error: smf core initialization failed\n");
