@@ -103,6 +103,17 @@ class SmfApp : public ProtoApp
         static void CliUsage();
         static int RunControlClient(int argc, const char*const* argv);
 
+        bool ControlReply(const char* data, unsigned int numBytes);
+        bool ControlReply(const std::string& s);
+        void OnShowCommand(const char* arg);
+        void ReplyVersion(bool json);
+        void ReplyStats(bool json);
+        void ReplyInfo(bool json);
+        void ReplyInterfaces(bool json);
+#ifdef ELASTIC_MCAST
+        void ReplyGroups(bool json, bool brief);
+#endif // ELASTIC_MCAST
+
         bool LoadConfig(const char* configPath);
         bool ProcessGroupConfig(ProtoJson::Object& groupConfig);
         bool ProcessInterfaceConfig(ProtoJson::Object& ifaceConfig);
@@ -1104,7 +1115,7 @@ void SmfApp::Usage()
 {
     const char* const* nextCmd = CMD_LIST;
     fprintf(stderr, "Usage: nrlsmf [options]:\n");
-    fprintf(stderr, "       nrlsmf --cli [-i <instance>] <command> [args...]\n");
+    fprintf(stderr, "       nrlsmf --cli [-i <instance>] -c <command> [-c <command> ...]\n");
     while (*nextCmd) {
         const char* cmd = &(*nextCmd)[1];
         nextCmd++;
@@ -1241,75 +1252,188 @@ SmfApp::CmdType SmfApp::GetCmdType(const char* cmd)
     return type;
 }  // end SmfApp::GetCmdType()
 
-// Status/query verbs handled in OnControlMsg that reply on server_pipe.
-static const struct
+// Modern CLI show commands. Legacy one-shot verbs (groupsj, jsonStats, ...)
+// remain on the control socket for machine clients.
+// A command is <topic> plus an optional subcommand (e.g. "interface grouping").
+// json/brief/details are optional modifiers; a command may support none, one, or
+// both of brief/details. The unmodified command is the default listing.
+static const struct ShowTopicSpec
 {
     const char* name;
+    const char* sub;     // NULL, or a subcommand such as "grouping"
     const char* help;
+    bool        json;
+    bool        brief;
+    bool        details;
     bool        elasticOnly;
-} kCliQueryCmds[] =
+} kShowTopics[] =
 {
-    { "ping",         "heartbeat; returns pong if nrlsmf is running", false },
-    { "stats",        "per-interface packet/flow counters (text table)", false },
-    { "jsonStats",    "same as stats, JSON", false },
-    { "info",         "interface groups (text table)", false },
-    { "jsonInfo",     "same as info, JSON", false },
-    { "jsonVersion",  "nrlsmf version as JSON", false },
-    { "interfaces",   "configured interfaces (text table)", false },
-    { "interfacesj",  "same as interfaces, JSON", false },
-    { "groups",       "elastic multicast groups (text)", true },
-    { "groupsj",      "same as groups, JSON", true },
-    { "brfgroups",    "brief elastic multicast groups (text)", true },
-    { "brfgroupsj",   "same as brfgroups, JSON", true },
-    { NULL, NULL, false }
+    { "version",     NULL,       "nrlsmf version",                     true, false, false, false },
+    { "statistics",  NULL,       "per-interface packet/flow counters", true, false, false, false },
+    { "interface",   NULL,       "configured interfaces",              true, false, false, false },
+    { "interface",   "grouping", "SMF interface groups",               true, false, false, false },
+    { "groups",      NULL,       "elastic multicast groups",           true, true,  false, true  },
+    { NULL, NULL, NULL, false, false, false, false }
 };
+
+static const ShowTopicSpec* FindShowTopic(const char* name, const char* sub)
+{
+    if (NULL == name)
+        return NULL;
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        if (0 != strcmp(name, kShowTopics[i].name))
+            continue;
+        if (NULL == sub)
+        {
+            if (NULL == kShowTopics[i].sub)
+                return &kShowTopics[i];
+        }
+        else if ((NULL != kShowTopics[i].sub) && (0 == strcmp(sub, kShowTopics[i].sub)))
+        {
+            return &kShowTopics[i];
+        }
+    }
+    return NULL;
+}
+
+static bool IsShowSubcommand(const char* name, const char* word)
+{
+    return (NULL != FindShowTopic(name, word));
+}
+
+static void FormatShowMods(std::ostringstream& ss, const ShowTopicSpec& topic)
+{
+    if (topic.brief)
+        ss << " [brief]";
+    if (topic.details)
+        ss << " [details]";
+    if (topic.json)
+        ss << " [json]";
+}
+
+static void FormatShowHelp(std::ostringstream& ss)
+{
+    ss << "Show commands:\n"
+       << "  nrlsmf --cli [-i <instance>] -c \"show <command> [modifiers]\"\n"
+       << "\n";
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        std::ostringstream line;
+        line << "  show " << kShowTopics[i].name;
+        if (NULL != kShowTopics[i].sub)
+            line << " " << kShowTopics[i].sub;
+        FormatShowMods(line, kShowTopics[i]);
+        ss << std::left << std::setw(40) << line.str() << kShowTopics[i].help;
+        if (kShowTopics[i].elasticOnly)
+            ss << " (elastic build)";
+        ss << "\n";
+    }
+    ss << "\n"
+       << "Modifiers are optional and command-specific. json, when used, is last:\n"
+       << "  brief     less output than the default listing\n"
+       << "  details   more output than the default listing\n"
+       << "  json      machine-readable JSON\n"
+       << "\n"
+       << "Examples:\n"
+       << "  nrlsmf --cli -c \"show statistics\"\n"
+       << "  nrlsmf --cli -c \"show statistics json\"\n"
+       << "  nrlsmf --cli -c \"show interface\"\n"
+       << "  nrlsmf --cli -c \"show interface grouping\"\n"
+       << "  nrlsmf --cli -c \"show interface grouping json\"\n"
+       << "  nrlsmf --cli -c \"show groups brief\"\n"
+       << "  nrlsmf --cli -c \"show groups brief json\"\n"
+       << "  nrlsmf --cli -i smf-p4 -c \"show interface json\"\n"
+       << "\n"
+       << "Configuration commands (debug, add, relay, map, ...) use the same\n"
+       << "--cli -c syntax and do not return a reply. See \"nrlsmf help\".\n";
+}
 
 static void CliQueryHelp()
 {
-    printf("Query / show commands:\n");
-    printf("  nrlsmf --cli [-i <instance>] <command>\n\n");
-    for (unsigned int i = 0; NULL != kCliQueryCmds[i].name; i++)
-    {
-        printf("  %-14s %s%s\n",
-               kCliQueryCmds[i].name,
-               kCliQueryCmds[i].help,
-               kCliQueryCmds[i].elasticOnly ? " (elastic build)" : "");
-    }
-    printf("\nConfiguration commands (debug, add, relay, map, ...) use the same\n"
-           "--cli syntax and do not return a reply. See \"nrlsmf help\".\n");
+    std::ostringstream ss;
+    FormatShowHelp(ss);
+    fputs(ss.str().c_str(), stdout);
 }
 
 void SmfApp::CliUsage()
 {
     fprintf(stderr,
-            "Usage: nrlsmf --cli [-i <instance>] <command> [args...]\n"
+            "Usage: nrlsmf --cli [-i <instance>] -c <command> [-c <command> ...]\n"
             "       nrlsmf --cli [-i <instance>] ?\n"
             "\n"
             "Send a runtime command to a running nrlsmf instance via its\n"
             "control socket (default instance \"%s\" -> /tmp/%s).\n"
+            "Repeat -c to send more than one command in order.\n"
             "\n"
             "Options:\n"
             "  -i, --instance <name>  Target instance (default: %s)\n"
+            "  -c, --cmd <text>       Command to send (repeatable)\n"
             "  -h, --help             Show this help\n"
-            "  ?                      List query / show commands\n"
+            "  ?                      List show commands\n"
             "\n"
             "Examples:\n"
             "  nrlsmf --cli ?\n"
-            "  nrlsmf --cli ping\n"
-            "  nrlsmf --cli stats\n"
-            "  nrlsmf --cli jsonInfo\n"
-            "  nrlsmf --cli debug 2\n"
-            "  nrlsmf --cli -i smf-r0 relay off\n",
+            "  nrlsmf --cli -c \"show statistics\"\n"
+            "  nrlsmf --cli -c \"show interface grouping\" -c \"show statistics\"\n"
+            "  nrlsmf --cli -c \"show groups brief json\"\n"
+            "  nrlsmf --cli -c \"debug 2\"\n"
+            "  nrlsmf --cli -i smf-r0 -c \"relay off\"\n",
             DEFAULT_INSTANCE_NAME, DEFAULT_INSTANCE_NAME, DEFAULT_INSTANCE_NAME);
 }
 
-static bool CliExpectsReply(const char* cmd)
+static const char* CliSkipSpace(const char* s)
 {
-    if (NULL == cmd)
+    while ((NULL != s) && isspace((unsigned char)*s))
+        s++;
+    return s;
+}
+
+static bool CliCopyFirstToken(const char* s, char* out, size_t outLen)
+{
+    s = CliSkipSpace(s);
+    if ((NULL == s) || ('\0' == *s) || (outLen < 2))
         return false;
-    for (unsigned int i = 0; NULL != kCliQueryCmds[i].name; i++)
+    size_t n = 0;
+    while ((s[n] != '\0') && !isspace((unsigned char)s[n]))
+        n++;
+    if (n >= outLen)
+        n = outLen - 1;
+    memcpy(out, s, n);
+    out[n] = '\0';
+    return true;
+}
+
+static bool CliIsLocalHelp(const char* message)
+{
+    const char* s = CliSkipSpace(message);
+    if ((NULL == s) || ('\0' == *s))
+        return false;
+    if (0 == strcmp(s, "?"))
+        return true;
+    if (0 != strncmp(s, "show", 4) || ((s[4] != '\0') && !isspace((unsigned char)s[4])))
+        return false;
+    s = CliSkipSpace(s + 4);
+    return ('\0' == *s) || (0 == strcmp(s, "?"));
+}
+
+static bool CliExpectsReply(const char* message)
+{
+    char cmd[64];
+    if (!CliCopyFirstToken(message, cmd, sizeof(cmd)))
+        return false;
+    if ((0 == strcmp(cmd, "show")) || (0 == strcmp(cmd, "ping")))
+        return true;
+    static const char* const kLegacyQueryCmds[] =
     {
-        if (0 == strcmp(cmd, kCliQueryCmds[i].name))
+        "stats", "jsonStats", "info", "jsonInfo", "jsonVersion",
+        "interfaces", "interfacesj", "groups", "groupsj",
+        "brfgroups", "brfgroupsj",
+        NULL
+    };
+    for (const char* const* p = kLegacyQueryCmds; NULL != *p; p++)
+    {
+        if (0 == strcmp(cmd, *p))
             return true;
     }
     return false;
@@ -1337,6 +1461,8 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
     SetDebugLevel(PL_ERROR);
 
     const char* instance = DEFAULT_INSTANCE_NAME;
+    std::vector<const char*> commands;
+    bool sawHelpPositional = false;
     int i = 2;
     while (i < argc)
     {
@@ -1356,6 +1482,28 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
             instance = argv[++i];
             i++;
         }
+        else if ((0 == strcmp(argv[i], "-c")) || (0 == strcmp(argv[i], "--cmd")))
+        {
+            if ((i + 1) >= argc)
+            {
+                fprintf(stderr, "nrlsmf --cli: %s requires a command string\n", argv[i]);
+                CliUsage();
+                return 1;
+            }
+            const char* cmd = CliSkipSpace(argv[++i]);
+            if ((NULL == cmd) || ('\0' == *cmd))
+            {
+                fprintf(stderr, "nrlsmf --cli: empty command\n");
+                return 1;
+            }
+            commands.push_back(cmd);
+            i++;
+        }
+        else if (0 == strcmp(argv[i], "?"))
+        {
+            sawHelpPositional = true;
+            i++;
+        }
         else if ('-' == argv[i][0])
         {
             fprintf(stderr, "nrlsmf --cli: unknown option %s\n", argv[i]);
@@ -1364,39 +1512,43 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
         }
         else
         {
+            fprintf(stderr, "nrlsmf --cli: pass commands with -c, e.g. -c \"%s\"\n", argv[i]);
+            CliUsage();
+            return 1;
+        }
+    }
+
+    if (commands.empty())
+    {
+        if (sawHelpPositional)
+        {
+            CliQueryHelp();
+            return 0;
+        }
+        CliUsage();
+        return 1;
+    }
+    if (sawHelpPositional)
+    {
+        fprintf(stderr, "nrlsmf --cli: unexpected '?'; use -c \"?\" to list show commands\n");
+        return 1;
+    }
+
+    bool anyRemote = false;
+    for (size_t n = 0; n < commands.size(); n++)
+    {
+        if (!CliIsLocalHelp(commands[n]))
+        {
+            anyRemote = true;
             break;
         }
     }
 
-    if (i >= argc)
+    if (!anyRemote)
     {
-        CliUsage();
-        return 1;
-    }
-
-    if (0 == strcmp(argv[i], "?"))
-    {
-        CliQueryHelp();
+        for (size_t n = 0; n < commands.size(); n++)
+            CliQueryHelp();
         return 0;
-    }
-
-    const char* cmd = argv[i];
-    char message[8192];
-    size_t used = 0;
-    message[0] = '\0';
-    for (int a = i; a < argc; a++)
-    {
-        size_t argLen = strlen(argv[a]);
-        if ((used + argLen + 2) >= sizeof(message))
-        {
-            fprintf(stderr, "nrlsmf --cli: command too long\n");
-            return 1;
-        }
-        if (used > 0)
-            message[used++] = ' ';
-        memcpy(message + used, argv[a], argLen);
-        used += argLen;
-        message[used] = '\0';
     }
 
     char listenName[64];
@@ -1423,45 +1575,54 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
         return 1;
     }
 
-    const bool wantsReply = CliExpectsReply(cmd);
-    if (wantsReply)
+    bool startedServer = false;
+    for (size_t n = 0; n < commands.size(); n++)
     {
-        // Status replies are sent on server_pipe, not back to the requester.
-        // Register this process as the (temporary) controller so we receive them.
-        char startMsg[128];
-        snprintf(startMsg, sizeof(startMsg), "smfServerStart %s", listenName);
-        unsigned int numBytes = (unsigned int)strlen(startMsg) + 1;
-        if (!smfPipe.Send(startMsg, numBytes))
+        const char* cmd = commands[n];
+        if (CliIsLocalHelp(cmd))
         {
-            fprintf(stderr, "nrlsmf --cli: failed to send smfServerStart to instance \"%s\"\n",
-                    instance);
+            CliQueryHelp();
+            continue;
+        }
+
+        if (CliExpectsReply(cmd) && !startedServer)
+        {
+            // Status replies are sent on server_pipe, not back to the requester.
+            // Register this process as the (temporary) controller so we receive them.
+            char startMsg[128];
+            snprintf(startMsg, sizeof(startMsg), "smfServerStart %s", listenName);
+            unsigned int numBytes = (unsigned int)strlen(startMsg) + 1;
+            if (!smfPipe.Send(startMsg, numBytes))
+            {
+                fprintf(stderr, "nrlsmf --cli: failed to send smfServerStart to instance \"%s\"\n",
+                        instance);
+                smfPipe.Close();
+                listenPipe.Close();
+                return 1;
+            }
+            startedServer = true;
+        }
+
+        unsigned int numBytes = (unsigned int)strlen(cmd) + 1;
+        if (!smfPipe.Send(cmd, numBytes))
+        {
+            fprintf(stderr, "nrlsmf --cli: failed to send command to instance \"%s\"\n", instance);
             smfPipe.Close();
             listenPipe.Close();
             return 1;
         }
-    }
 
-    unsigned int numBytes = (unsigned int)used + 1;
-    if (!smfPipe.Send(message, numBytes))
-    {
-        fprintf(stderr, "nrlsmf --cli: failed to send command to instance \"%s\"\n", instance);
-        smfPipe.Close();
-        listenPipe.Close();
-        return 1;
-    }
-
-    int exitStatus = 0;
-    if (wantsReply)
-    {
-        char reply[8192];
-        unsigned int replyLen = sizeof(reply);
-        if (!CliRecvWithTimeout(listenPipe, reply, replyLen, 2000))
+        if (CliExpectsReply(cmd))
         {
-            fprintf(stderr, "nrlsmf --cli: timed out waiting for reply to \"%s\"\n", cmd);
-            exitStatus = 1;
-        }
-        else
-        {
+            char reply[8192];
+            unsigned int replyLen = sizeof(reply);
+            if (!CliRecvWithTimeout(listenPipe, reply, replyLen, 2000))
+            {
+                fprintf(stderr, "nrlsmf --cli: timed out waiting for reply to \"%s\"\n", cmd);
+                smfPipe.Close();
+                listenPipe.Close();
+                return 1;
+            }
             fwrite(reply, 1, replyLen, stdout);
             if ((0 == replyLen) || ('\n' != reply[replyLen - 1]))
                 fputc('\n', stdout);
@@ -1470,7 +1631,7 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
 
     smfPipe.Close();
     listenPipe.Close();
-    return exitStatus;
+    return 0;
 }  // end SmfApp::RunControlClient()
 
 bool SmfApp::OnStartup(int argc, const char*const* argv)
@@ -6122,13 +6283,397 @@ bool SmfApp::AssignAddresses(const char* ifaceName, unsigned int ifaceIndex, con
     return true;
 }  // end SmfApp::AssignAddresses()
 
+bool SmfApp::ControlReply(const char* data, unsigned int numBytes)
+{
+    if (!server_pipe.IsOpen())
+    {
+        fprintf(stderr, "Server pipe is NOT open\n");
+        PLOG(PL_WARN, "SmfApp::ControlReply() server pipe is not open\n");
+        return false;
+    }
+    if (!server_pipe.Send(data, numBytes))
+    {
+        PLOG(PL_ERROR, "SmfApp::ControlReply() error sending %u byte reply\n", numBytes);
+        return false;
+    }
+    return true;
+}
+
+bool SmfApp::ControlReply(const std::string& s)
+{
+    unsigned int n = (unsigned int)s.size();
+    return ControlReply(s.c_str(), n);
+}
+
+void SmfApp::ReplyVersion(bool json)
+{
+    if (json)
+    {
+        ServerSend("jsonVersion", _SMF_VERSION);
+        return;
+    }
+    char buf[128];
+    snprintf(buf, sizeof(buf), "smf version: %s\n", _SMF_VERSION);
+    ControlReply(std::string(buf));
+}
+
+void SmfApp::ReplyStats(bool json)
+{
+    std::ostringstream ss;
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* nextIface;
+    if (json)
+    {
+        ss << "[";
+        bool comma = false;
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << (comma ? "," : "") << "{";
+            ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
+            ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
+            ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
+            ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
+            ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
+            ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
+            ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
+            ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
+            ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
+            ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
+            ss << "}";
+            comma = true;
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "Interface        Flows      Receives   MReceives  Sends      ReXmits    Forwards   Duplicates Asyms      QueueLen\n";
+        ss << "---------------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ----------\n";
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
+            ss << std::right << std::setw(10) << nextIface->GetFlowCount() << " ";
+            ss << std::setw(10) << nextIface->GetRecvCount() << " ";
+            ss << std::setw(10) << nextIface->GetMcastCount() << " ";
+            ss << std::setw(10) << nextIface->GetSentCount() << " ";
+            ss << std::setw(10) << nextIface->GetRetransmissionCount() << " ";
+            ss << std::setw(10) << nextIface->GetForwardCount() << " ";
+            ss << std::setw(10) << nextIface->GetDuplicateCount() << " ";
+            ss << std::setw(10) << nextIface->GetAsymCount() << " ";
+            ss << std::setw(10) << nextIface->GetQueueLength() << "\n";
+        }
+    }
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyInfo(bool json)
+{
+    Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+    Smf::InterfaceGroup* group;
+    std::ostringstream ss;
+    if (json)
+    {
+        bool first = true;
+        std::string spot;
+        ss << "[";
+        while (NULL != (group = grouperator.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[Smf::IF_NAME_MAX] = '\0';
+            Smf::InterfaceGroup::Iterator ifacerator(*group);
+            Smf::Interface* iface;
+
+            spot = first ? "" : ",";
+            first = false;
+            ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
+            ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
+            std::string relayType;
+            switch (group->GetRelayType())
+            {
+                case Smf::INVALID: relayType="Invalid"; break;
+                case Smf::CF: relayType="cf"; break;
+                case Smf::S_MPR: relayType="s_mpr"; break;
+                case Smf::E_CDS: relayType="e_cds"; break;
+                case Smf::MPR_CDS: relayType="mpr_cds"; break;
+                case Smf::NS_MPR: relayType="ns_mpr"; break;
+            }
+            ss << "\"RelayType\": \"" << relayType << "\",";
+            switch (group->GetForwardingMode())
+            {
+                case Smf::PUSH: relayType="Push"; break;
+                case Smf::MERGE: relayType="Merge"; break;
+                case Smf::RELAY: relayType="Relay"; break;
+            }
+            ss << "\"ForwardingMode\": \"" << relayType << "\",";
+            ss << "\"Interfaces\": [";
+            bool firstInterface = true;
+            while (NULL != (iface = ifacerator.GetNextInterface()))
+            {
+                ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+                spot = firstInterface ? "" : ",";
+                ss << spot << "\""<< ifaceName << "\"";
+                firstInterface = false;
+            }
+            ss << "]";
+            if (group->GetElasticMulticast())
+                ss << ", \"Elastic\" : true";
+            if (group->GetAdaptiveRouting())
+                ss << ", \"Adaptive\" : true";
+            ss << "}";
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "GroupName            GroupType RelayType ForwardingMode Interfaces\n";
+        ss << "-------------------- --------- --------- -------------- ----------\n";
+        while (NULL != (group = grouperator.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[Smf::IF_NAME_MAX] = '\0';
+            Smf::InterfaceGroup::Iterator ifacerator(*group);
+            Smf::Interface* iface;
+
+            ss << std::left << std::setw(21) << group->GetName();
+            ss << std::setw(9) << (group->IsTemplateGroup() ? "Template" : "Regular") << " ";
+            std::string relayType;
+            switch (group->GetRelayType())
+            {
+                case Smf::INVALID: relayType="Invalid"; break;
+                case Smf::CF: relayType="cf"; break;
+                case Smf::S_MPR: relayType="s_mpr"; break;
+                case Smf::E_CDS: relayType="e_cds"; break;
+                case Smf::MPR_CDS: relayType="mpr_cds"; break;
+                case Smf::NS_MPR: relayType="ns_mpr"; break;
+            }
+            ss << std::setw(9) << relayType << " ";
+            switch (group->GetForwardingMode())
+            {
+                case Smf::PUSH: relayType="Push"; break;
+                case Smf::MERGE: relayType="Merge"; break;
+                case Smf::RELAY: relayType="Relay"; break;
+            }
+            ss << std::setw(14) << relayType << " ";
+            bool firstInterface = true;
+            while (NULL != (iface = ifacerator.GetNextInterface()))
+            {
+                ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+                ss << ( firstInterface ? "" : ",") << ifaceName;
+                firstInterface = false;
+            }
+            if (group->GetElasticMulticast())
+                ss << ", Elastic";
+            if (group->GetAdaptiveRouting())
+                ss << ", Adaptive";
+            ss << "\n";
+        }
+        ss << "\n";
+    }
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyInterfaces(bool json)
+{
+    std::ostringstream ss;
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* nextIface;
+    if (json)
+    {
+        bool comma = false;
+        ss << "[";
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << (comma ? "," : "") << "{";
+            ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
+            ss << "\"FwdMethod\" : \"";
+#ifdef ELASTIC_MCAST
+            if (nextIface->GetElasticMulticast()) {
+                if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
+                    ss << "Advertise";
+                else
+                    ss << "Elastic";
+            } else  ss << "Flood";
+#else
+            ss << "Flood";
+#endif // ELASTIC_MCAST
+            ss << "\",";
+            ss << "\"Flags\" : \"";
+            if (nextIface->IsLayered()) ss << "L";
+            if (nextIface->IsTunnel()) ss << "T";
+            if (nextIface->IsIgmpProxy()) ss << "I";
+            InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
+            if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+            ss << "\"}";
+            comma = true;
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing\n\n";
+        ss << "Interface        Fwd Method Flags\n";
+        ss << "---------------- ---------- -----\n";
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
+            ss << std::setw(12);
+#ifdef ELASTIC_MCAST
+            if (nextIface->GetElasticMulticast()) {
+                if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
+                    ss << "Advertise";
+                else
+                    ss << "Elastic";
+            } else  ss << "Flood";
+#else
+            ss << "Flood";
+#endif // ELASTIC_MCAST
+            std::setw(1);
+            if (nextIface->IsLayered()) ss << "L";
+            if (nextIface->IsTunnel()) ss << "T";
+            if (nextIface->IsIgmpProxy()) ss << "I";
+            InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
+            if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+            ss << "\n";
+        }
+    }
+    ControlReply(ss.str());
+}
+
+#ifdef ELASTIC_MCAST
+void SmfApp::ReplyGroups(bool json, bool brief)
+{
+    std::ostringstream ss;
+    mcast_controller.DumpGroups(brief, json, ss);
+    ControlReply(ss.str());
+}
+#endif // ELASTIC_MCAST
+
+void SmfApp::OnShowCommand(const char* arg)
+{
+    while ((NULL != arg) && isspace((unsigned char)*arg))
+        arg++;
+    if ((NULL == arg) || ('\0' == *arg) || (0 == strcmp(arg, "?")))
+    {
+        std::ostringstream ss;
+        FormatShowHelp(ss);
+        ControlReply(ss.str());
+        return;
+    }
+
+    char buf[256];
+    strncpy(buf, arg, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    const char* topic = NULL;
+    const char* sub = NULL;
+    bool json = false;
+    bool brief = false;
+    bool details = false;
+    char* p = buf;
+    while (*p)
+    {
+        while (isspace((unsigned char)*p))
+            p++;
+        if ('\0' == *p)
+            break;
+        char* start = p;
+        while ((*p != '\0') && !isspace((unsigned char)*p))
+            p++;
+        if (*p)
+            *p++ = '\0';
+        if (NULL == topic)
+        {
+            topic = start;
+        }
+        else if ((NULL == sub) && !json && !brief && !details && IsShowSubcommand(topic, start))
+        {
+            sub = start;
+        }
+        else if (0 == strcmp(start, "json"))
+        {
+            json = true;
+        }
+        else if (json)
+        {
+            ControlReply(std::string("show: 'json' must be the last modifier\n"));
+            return;
+        }
+        else if (0 == strcmp(start, "brief"))
+        {
+            brief = true;
+        }
+        else if ((0 == strcmp(start, "details")) || (0 == strcmp(start, "detail")))
+        {
+            details = true;
+        }
+        else
+        {
+            ControlReply(std::string("show: unknown modifier '") + start + "'\n");
+            return;
+        }
+    }
+
+    if (NULL == topic)
+    {
+        std::ostringstream ss;
+        FormatShowHelp(ss);
+        ControlReply(ss.str());
+        return;
+    }
+    if (brief && details)
+    {
+        ControlReply(std::string("show: 'brief' and 'details' cannot be used together\n"));
+        return;
+    }
+
+    const ShowTopicSpec* spec = FindShowTopic(topic, sub);
+    std::string cmdName = std::string("show ") + topic;
+    if (NULL != sub)
+        cmdName += std::string(" ") + sub;
+    if (NULL == spec)
+    {
+        ControlReply(cmdName + ": unknown command\n");
+        return;
+    }
+    if (json && !spec->json)
+    {
+        ControlReply(cmdName + ": 'json' is not supported\n");
+        return;
+    }
+    if (brief && !spec->brief)
+    {
+        ControlReply(cmdName + ": 'brief' is not supported\n");
+        return;
+    }
+    if (details && !spec->details)
+    {
+        ControlReply(cmdName + ": 'details' is not supported\n");
+        return;
+    }
+
+    if (0 == strcmp(topic, "version"))
+        ReplyVersion(json);
+    else if (0 == strcmp(topic, "statistics"))
+        ReplyStats(json);
+    else if ((0 == strcmp(topic, "interface")) && (NULL != sub) && (0 == strcmp(sub, "grouping")))
+        ReplyInfo(json);
+    else if (0 == strcmp(topic, "interface"))
+        ReplyInterfaces(json);
+    else if (0 == strcmp(topic, "groups"))
+    {
+#ifdef ELASTIC_MCAST
+        // Default listing is DumpGroups(false); brief selects the shorter dump.
+        ReplyGroups(json, brief);
+#else
+        ControlReply(std::string("show groups is only available in elastic builds\n"));
+#endif // ELASTIC_MCAST
+    }
+}
+
 /* These are the messages that come in through the server socket
- *   "-jsonInfo",        "Returns string with group names and interfaces, json formatted to unix socket",
- *   "-jsonStats",       "Return stats for everything in json format to unix socket",
- *   "-jsonVersion",     "Return version in json format to unix socket",  Not in CLI
- *   "-ping",            "Ping/Heartbeat returns 'pong' if nrlsmf is running", // should this be for a specific group?
- *   "-stats",           "Return stats for everything  to unix socket",
- *   "-info",            "Returns string with group names and interfaces"
+ *   "show <command> [brief|details] [json]"  modern CLI status query
+ *   e.g. show statistics, show interface, show interface grouping
+ *   legacy: jsonInfo, jsonStats, jsonVersion, ping, stats, info,
+ *           interfaces, interfacesj, groups, groupsj, brfgroups, brfgroupsj
  */
 void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 {
@@ -6315,10 +6860,13 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 }
                 smf.SetNeighborList(arg, argLen);
             }
+            else if (0 == strcmp(cmd, "show"))
+            {
+                OnShowCommand(arg);
+            }
             else if (!strncmp("jsonVersion", cmd, len))
             {
-                ServerSend("jsonVersion", _SMF_VERSION);
-                return;
+                ReplyVersion(true);
             }
             else if (!strncmp("ping", cmd, len)) // just checking that nrlsmf is running, don't care about anything else ...
             {
@@ -6333,9 +6881,6 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     }
                     else
                         PLOG(PL_DEBUG, "SmfApp::OnCommand(instance) sent heartbeat to smf server\n");
-
-                    // following line sends json format back, probably not needed
-                    // ServerSend("ping", "pong");
                 }
                 else
                 {
@@ -6343,332 +6888,38 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     PLOG(PL_WARN, "SmfApp::OnCommand(ping) warning: unable to connect to smfServer\n");
                 }
             }
-	        else if (!strncmp(cmd, "stats", cmdLen))
-	        {
-                std::ostringstream ss;
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    ss << "Interface        Flows      Receives   MReceives  Sends      ReXmits    Forwards   Duplicates Asyms      QueueLen\n";
-                    ss << "---------------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ----------\n";
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
-                        ss << std::right << std::setw(10) << nextIface->GetFlowCount() << " ";
-                        ss << std::setw(10) << nextIface->GetRecvCount() << " ";
-                        ss << std::setw(10) << nextIface->GetMcastCount() << " ";
-                        ss << std::setw(10) << nextIface->GetSentCount() << " ";
-                        ss << std::setw(10) << nextIface->GetRetransmissionCount() << " ";
-                        ss << std::setw(10) << nextIface->GetForwardCount() << " ";
-                        ss << std::setw(10) << nextIface->GetDuplicateCount() << " ";
-                        ss << std::setw(10) << nextIface->GetAsymCount() << " ";
-                        ss << std::setw(10) << nextIface->GetQueueLength() << "\n";
-                    }
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(stats) error sending stats to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is not open for stats\n");
-                    return;
-                }
-            }
-            else if (!strncmp("jsonInfo", cmd, len)) // just checking groupInfo ...
+            else if (!strncmp(cmd, "stats", cmdLen))
             {
-                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
-                Smf::InterfaceGroup* group;
-                std::ostringstream ss;
-                bool first = true;
-                std::string spot;
-                ss << "[";
-                while (NULL != (group = grouperator.GetNextItem()))
-                {
-                    char ifaceName[Smf::IF_NAME_MAX + 1];
-                    ifaceName[Smf::IF_NAME_MAX] = '\0';
-                    Smf::InterfaceGroup::Iterator ifacerator(*group);
-                    Smf::Interface* iface;
-
-                    // If we don't want to see PUSH groups, uncomment following two lines ...
-                    // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
-                    //     continue;
-                    spot = first ? "" : ",";
-                    first = false;
-                    ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
-                    ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
-                    std::string relayType;
-                    switch (group->GetRelayType())
-                    {
-                        case Smf::INVALID: relayType="Invalid"; break;
-                        case Smf::CF: relayType="cf"; break;
-                        case Smf::S_MPR: relayType="s_mpr"; break;
-                        case Smf::E_CDS: relayType="e_cds"; break;
-                        case Smf::MPR_CDS: relayType="mpr_cds"; break;
-                        case Smf::NS_MPR: relayType="ns_mpr"; break;
-                    }
-                    ss << "\"RelayType\": \"" << relayType << "\",";
-                    switch (group->GetForwardingMode())
-                    {
-                        case Smf::PUSH: relayType="Push"; break;
-                        case Smf::MERGE: relayType="Merge"; break;
-                        case Smf::RELAY: relayType="Relay"; break;
-                    }
-                    ss << "\"ForwardingMode\": \"" << relayType << "\",";
-                    ss << "\"Interfaces\": [";
-                    bool firstInterface = true;
-                    while (NULL != (iface = ifacerator.GetNextInterface()))
-                    {
-                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                        spot = firstInterface ? "" : ",";
-                        ss << spot << "\""<< ifaceName << "\"";
-                        firstInterface = false;
-                    }
-                    ss << "]";
-                    if (group->GetElasticMulticast())
-                        ss << ", \"Elastic\" : true";
-                    if (group->GetAdaptiveRouting())
-                        ss << ", \"Adaptive\" : true";
-                    ss << "}";
-                }
-                ss << "]\n";
-                if (server_pipe.IsOpen())
-                {
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(jsonInfo) error sending jsonInfo to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is NOT open\n");
-                    PLOG(PL_WARN, "SmfApp::OnCommand(jsonInfo) warning: unable to connect to smfServer\n");
-                }
+                ReplyStats(false);
             }
-            else if (!strncmp("info", cmd, len)) // just checking groupInfo ...
+            else if (!strncmp("jsonInfo", cmd, len))
             {
-                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
-                Smf::InterfaceGroup* group;
-                std::ostringstream ss;
-                ss << "";
-                ss << "GroupName            GroupType RelayType ForwardingMode Interfaces\n";
-                ss << "-------------------- --------- --------- -------------- ----------\n";
-                while (NULL != (group = grouperator.GetNextItem()))
-                {
-                    char ifaceName[Smf::IF_NAME_MAX + 1];
-                    ifaceName[Smf::IF_NAME_MAX] = '\0';
-                    Smf::InterfaceGroup::Iterator ifacerator(*group);
-                    Smf::Interface* iface;
-
-                    // If we don't want to see PUSH groups, uncomment following two lines ...
-                    // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
-                    //     continue;
-                    ss << std::left << std::setw(21) << group->GetName();
-                    ss << std::setw(9) << (group->IsTemplateGroup() ? "Template" : "Regular") << " ";
-                    std::string relayType;
-                    switch (group->GetRelayType())
-                    {
-                        case Smf::INVALID: relayType="Invalid"; break;
-                        case Smf::CF: relayType="cf"; break;
-                        case Smf::S_MPR: relayType="s_mpr"; break;
-                        case Smf::E_CDS: relayType="e_cds"; break;
-                        case Smf::MPR_CDS: relayType="mpr_cds"; break;
-                        case Smf::NS_MPR: relayType="ns_mpr"; break;
-                    }
-                    ss << std::setw(9) << relayType << " ";
-                    switch (group->GetForwardingMode())
-                    {
-                        case Smf::PUSH: relayType="Push"; break;
-                        case Smf::MERGE: relayType="Merge"; break;
-                        case Smf::RELAY: relayType="Relay"; break;
-                    }
-                    ss << std::setw(14) << relayType << " ";
-                    bool firstInterface = true;
-                    while (NULL != (iface = ifacerator.GetNextInterface()))
-                    {
-                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                        ss << ( firstInterface ? "" : ",") << ifaceName;
-                        firstInterface = false;
-                    }
-                    if (group->GetElasticMulticast())
-                        ss << ", Elastic";
-                    if (group->GetAdaptiveRouting())
-                        ss << ", Adaptive";
-                    ss << "\n";
-                }
-                ss << "\n";
-                if (server_pipe.IsOpen())
-                {
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(info) error sending info to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is NOT open\n");
-                    PLOG(PL_WARN, "SmfApp::OnCommand(info) warning: unable to connect to smfServer\n");
-                }
+                ReplyInfo(true);
             }
-            else if (!strncmp("jsonStats", cmd, len)) // just checking stats ...
+            else if (!strncmp("info", cmd, len))
             {
-                std::ostringstream ss;
-                ss << "[";
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    bool comma = false;
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << (comma ? "," : "") << "{";
-                        ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
-                        ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
-                        ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
-                        ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
-                        ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
-                        ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
-                        ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
-                        ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
-                        ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
-                        ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
-                        ss << "}";
-                        comma = true;
-                    }
-                    ss << "]\n";
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(jsonStats) error sending jsonStats to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is not open for stats\n");
-                    return;
-                }
+                ReplyInfo(false);
             }
-            else if (!strncmp("interfaces", cmd, len)) // checking interfaces
+            else if (!strncmp("jsonStats", cmd, len))
             {
-                std::ostringstream ss;
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing\n\n";
-                    ss << "Interface        Fwd Method Flags\n";
-                    ss << "---------------- ---------- -----\n";
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
-                        ss << std::setw(12);
-#ifdef ELASTIC_MCAST
-                        if (nextIface->GetElasticMulticast()) {
-
-                            if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
-                                ss << "Advertise";
-                            else
-                                ss << "Elastic";
-                        } else  ss << "Flood";
-#else
-                        ss << "Flood";
-#endif // ELASTIC_MCAST
-
-                        std::setw(1);
-                        if (nextIface->IsLayered()) ss << "L";
-                        if (nextIface->IsTunnel()) ss << "T";
-                        if (nextIface->IsIgmpProxy()) ss << "I";
-                        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
-                        if ((NULL != mech) && mech->IsShadowing()) ss << "S";
-                        ss << "\n";
-                    }
-                }
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(interfaces) error sending interfaces to smf server\n");
-                    return;
-                }
+                ReplyStats(true);
             }
-            else if (!strncmp("interfacesj", cmd, len)) // checking interfaces
+            else if (0 == strcmp(cmd, "interfacesj"))
             {
-                std::ostringstream ss;
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    bool comma = false;
-
-                    ss << "[";
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << (comma ? "," : "") << "{";
-                        ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
-                        ss << "\"FwdMethod\" : \"";
-#ifdef ELASTIC_MCAST
-                        if (nextIface->GetElasticMulticast()) {
-                            if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
-                                ss << "Advertise";
-                            else
-                                ss << "Elastic";
-                        } else  ss << "Flood";
-#else
-                        ss << "Flood";
-#endif // ELASTIC_MCAST
-                        ss << "\",";
-
-                        ss << "\"Flags\" : \"";
-                        if (nextIface->IsLayered()) ss << "L";
-                        if (nextIface->IsTunnel()) ss << "T";
-                        if (nextIface->IsIgmpProxy()) ss << "I";
-                        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
-                        if ((NULL != mech) && mech->IsShadowing()) ss << "S";
-                        ss << "\"}";
-                        comma = true;
-                    }
-                    ss << "]\n";
-                }
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(interfaces) error sending interfaces to smf server\n");
-                    return;
-                }
+                ReplyInterfaces(true);
+            }
+            else if (!strncmp("interfaces", cmd, len))
+            {
+                ReplyInterfaces(false);
             }
 #ifdef ELASTIC_MCAST
-            else if (!strncmp("brfgroups", cmd, len) || !strncmp("brfgroupsj", cmd, len)) // checking groups brief
+            else if (!strncmp("brfgroups", cmd, len) || !strncmp("brfgroupsj", cmd, len))
             {
-                std::ostringstream ss;
-                bool useJson = cmd[len-1] == 'j';
-
-                mcast_controller.DumpGroups(true, useJson, ss);
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(brfgroups) error sending brfgroups to smf server\n");
-                    return;
-                }
+                ReplyGroups(cmd[len-1] == 'j', true);
             }
-            else if (!strncmp("groups", cmd, len) || !strncmp("groupsj", cmd, len)) // checking stats groups
+            else if (!strncmp("groups", cmd, len) || !strncmp("groupsj", cmd, len))
             {
-                std::ostringstream ss;
-                bool useJson = cmd[len-1] == 'j';
-
-                mcast_controller.DumpGroups(false, useJson, ss);
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(groups) error sending groups to smf server\n");
-                    return;
-                }
+                ReplyGroups(cmd[len-1] == 'j', false);
             }
 #endif // ELASTIC_MCAST
 
