@@ -1119,7 +1119,24 @@ nrlsmf --cli [-i &lt;instanceName&gt;] -c "&lt;command&gt;" [-c "&lt;command&gt;
             <literal>0.0.0.0</literal> is the kernel wildcard
             (INADDR_ANY), not a send destination. Typically this command
             is not needed for point-to-point GRE or multicast-underlay
-            mGRE (the tunnel remote is already the group).</entry>
+            mGRE (the tunnel remote is already the group). Runtime mappings
+            can be listed with "<literal>show tunnel</literal>":
+            <literal>Local</literal>/<literal>Remote</literal> are underlay
+            tunnel endpoints and <literal>IP</literal> is the local overlay
+            address. <literal>C</literal> in
+            <literal>Flags</literal> means the mapping was added with this
+            command; otherwise it was learned from the kernel. GRE/mGRE
+            neighbors are listed with "<literal>show tunnel
+            neighbors</literal>": <literal>Neighbor IP</literal> is the peer
+            overlay address and <literal>Remote</literal> is the peer
+            underlay. Neighbor flags use <literal>C</literal> for
+            configured plus the kernel NUD state:
+            <literal>R</literal> reachable, <literal>S</literal> stale,
+            <literal>D</literal> delay, <literal>P</literal> probe,
+            <literal>I</literal> incomplete, <literal>F</literal> failed,
+            <literal>N</literal> no-ARP, <literal>M</literal>
+            permanent (for example <literal>CR</literal> is configured and
+            reachable).</entry>
           </row>
 
           <row>
@@ -2376,7 +2393,9 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
     Commands include
     <literal>version</literal>, <literal>statistics</literal>,
     <literal>interface</literal>, <literal>interface grouping</literal>
-    (a subcommand of <literal>interface</literal>), and
+    (a subcommand of <literal>interface</literal>),
+    <literal>tunnel</literal>, <literal>tunnel neighbors</literal>
+    (GRE/mGRE neighbors from configuration and/or the kernel), and
     <literal>groups</literal>. The unmodified command is the default listing.
     Optional modifiers are command-specific. <literal>brief</literal> requests
     less output and <literal>details</literal> requests more; a command may
