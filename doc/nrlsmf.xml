@@ -167,7 +167,7 @@ make -f Makefile.linux elastic</programlisting>
 Run "nrlsmf -help" for the complete list of supported commands.
 
 To send a command to an already-running instance:
-nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt; [args...]</programlisting>
+nrlsmf --cli [-i &lt;instanceName&gt;] -c "&lt;command&gt;" [-c "&lt;command&gt;" ...]</programlisting>
       </informalexample></para>
 
     <sect2 id="ExampleUsage">
@@ -2369,14 +2369,27 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
 
     <para>The same <application>nrlsmf</application> binary can act as a
     client against that socket. Invoke it as
-    "<literal>nrlsmf --cli [-i &lt;instanceName&gt;] &lt;command&gt;
-    [args...]</literal>" to send a runtime command and, for status queries
-    such as <literal>ping</literal>, <literal>stats</literal>,
-    <literal>info</literal>, and the <literal>json*</literal> variants, print
-    the reply. Configuration commands (for example
-    "<literal>nrlsmf --cli debug 2</literal>") are sent without waiting for a
-    response. Use "<literal>-i</literal>" when the target process was started
-    with a non-default <literal>instance</literal> name.</para>
+    "<literal>nrlsmf --cli [-i &lt;instanceName&gt;] -c "show &lt;command&gt;
+    [modifiers]"</literal>" to query runtime status. Repeat
+    <literal>-c</literal> to send more than one command (for example
+    "<literal>nrlsmf --cli -c "show statistics" -c "show interface grouping"</literal>").
+    Commands include
+    <literal>version</literal>, <literal>statistics</literal>,
+    <literal>interface</literal>, <literal>interface grouping</literal>
+    (a subcommand of <literal>interface</literal>), and
+    <literal>groups</literal>. The unmodified command is the default listing.
+    Optional modifiers are command-specific. <literal>brief</literal> requests
+    less output and <literal>details</literal> requests more; a command may
+    support none, one, or both. When JSON is wanted, <literal>json</literal>
+    is always the last modifier (for example
+    "<literal>show groups brief json</literal>").
+    Older one-shot verbs such as <literal>stats</literal> and
+    <literal>groupsj</literal> still work for compatibility. Configuration
+    commands (for example "<literal>nrlsmf --cli -c "debug 2"</literal>") are sent
+    without waiting for a response. Use "<literal>-i</literal>" when the
+    target process was started with a non-default <literal>instance</literal>
+    name. Run "<literal>nrlsmf --cli ?</literal>" for the show-command
+    list.</para>
   </sect1>
 
   <sect1>
