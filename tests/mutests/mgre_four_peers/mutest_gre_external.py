@@ -91,6 +91,10 @@ from four_peer_hosts import start_host_mcast_client
 from four_peer_hosts import start_overlay_mcast_servers
 from four_peer_hosts import wait_overlay_mcast_receivers
 from kernel_compat import min_kernel_version
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
+from smf_cli import show_json
 
 ROUTERS = {
     "r0": {"underlay": "10.0.0.2", "overlay": "172.16.0.1"},
@@ -260,6 +264,18 @@ wait_step(
     timeout=20,
 )
 
+section("nrlsmf --cli show tunnel (json, no map -- no configured remotes)")
+
+nomap = show_json("r0", "show tunnel", "smf-r0-ext-nomap")
+if nomap is not None:
+    test_step(isinstance(nomap, list), "r0 nomap show tunnel json is a list", target="r0")
+    gre_rows = [r for r in nomap if isinstance(r, dict) and r.get("Interface") == GRE_DEV]
+    test_step(
+        not any("C" in (r.get("Flags") or "") for r in gre_rows),
+        "r0 nomap show tunnel has no C flag on gre1",
+        target="r0",
+    )
+
 section("Stop the un-mapped instances")
 
 for name in ROUTERS:
@@ -302,6 +318,27 @@ for name, cfg in ROUTERS.items():
         match="overlay",
         desc=f"{name} nrlsmf log shows overlay group",
         timeout=20,
+    )
+
+section("nrlsmf --cli show tunnel / neighbors (json, explicit map)")
+
+for name, cfg in ROUTERS.items():
+    peers = [ocfg for other, ocfg in ROUTERS.items() if other != name]
+    inst = f"smf-{name}-ext"
+    check_common_show(name, inst, group_name="overlay", ifaces=("eth1", GRE_DEV))
+    check_show_tunnel(
+        name, inst, GRE_DEV,
+        local=cfg["underlay"],
+        remotes=[p["underlay"] for p in peers],
+        overlay_ip=cfg["overlay"],
+        want_c=True,
+    )
+    # External GRE has no ip neigh table; mapped remotes appear as Neighbor IP "-".
+    check_show_neighbors(
+        name, inst, GRE_DEV,
+        remotes=[p["underlay"] for p in peers],
+        min_count=3,
+        want_c=True,
     )
 
 section("[External] Overlay multicast: h0 -> SMF -> h1/h2/h3")

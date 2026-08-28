@@ -58,12 +58,16 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from four_peer_hosts import RECV_HOSTS
 from four_peer_hosts import cleanup_iperf
 from four_peer_hosts import setup_host_lan
 from four_peer_hosts import start_host_mcast_client
 from four_peer_hosts import start_overlay_mcast_servers
 from four_peer_hosts import wait_overlay_mcast_receivers
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
 
 # Underlay LAN addressing (matches */etc.frr/frr.conf)
 ROUTERS = {
@@ -206,6 +210,27 @@ for name, cfg in ROUTERS.items():
         timeout=20,
     )
 
+section("nrlsmf --cli show tunnel / neighbors (json, explicit map)")
+
+for name, cfg in ROUTERS.items():
+    peers = [ocfg for other, ocfg in ROUTERS.items() if other != name]
+    inst = f"smf-{name}"
+    check_common_show(name, inst, group_name="overlay", ifaces=("eth1", GRE_DEV))
+    check_show_tunnel(
+        name, inst, GRE_DEV,
+        local=cfg["underlay"],
+        remotes=[p["underlay"] for p in peers],
+        overlay_ip=cfg["overlay"],
+        want_c=True,
+    )
+    check_show_neighbors(
+        name, inst, GRE_DEV,
+        remotes=[p["underlay"] for p in peers],
+        neighbor_ips=[p["overlay"] for p in peers],
+        min_count=3,
+        want_c=True,
+    )
+
 section("[Static] Overlay multicast: h0 -> SMF -> h1/h2/h3 (explicit map)")
 
 RECEIVERS = RECV_HOSTS
@@ -247,6 +272,25 @@ wait_step(
     desc="r0 nrlsmf log shows overlay group",
     timeout=20,
 )
+
+section("nrlsmf --cli show tunnel / neighbors (json, r0 map dynamic)")
+
+# Dynamic learns remotes from kernel neigh; Neighbor IP is overlay, Remote is
+# underlay. C is only set for explicit map, so it is not required here.
+peers_r0 = [ocfg for other, ocfg in ROUTERS.items() if other != "r0"]
+check_show_tunnel(
+    "r0", "smf-r0", GRE_DEV,
+    local=ROUTERS["r0"]["underlay"],
+    remotes=[p["underlay"] for p in peers_r0],
+    overlay_ip=ROUTERS["r0"]["overlay"],
+)
+check_show_neighbors(
+    "r0", "smf-r0", GRE_DEV,
+    remotes=[p["underlay"] for p in peers_r0],
+    neighbor_ips=[p["overlay"] for p in peers_r0],
+    min_count=3,
+)
+
 start_overlay_mcast_servers(step, RECEIVERS, OVERLAY_MCAST)
 start_host_mcast_client(step, wait_step, OVERLAY_MCAST)
 wait_overlay_mcast_receivers(wait_step, RECEIVERS)

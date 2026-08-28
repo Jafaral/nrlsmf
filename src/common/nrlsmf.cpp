@@ -6760,8 +6760,10 @@ void SmfApp::ReplyTunnelNeighbors(bool json)
         const ProtoAddress& remote = info->GetRemoteAddress();
         if (TunnelAddrUnspecified(remote))
             continue;
-        if (info->FromConfig())
-            MarkTunnelNeighbor(rows, info->GetIndex(), remote, true, info->FromKernel());
+        // Configured maps and kernel-learned device remotes (P2P, multicast-
+        // underlay). 0.0.0.0 is skipped above; it is not a neighbor.
+        MarkTunnelNeighbor(rows, info->GetIndex(), remote, info->FromConfig(),
+                           info->FromKernel());
     }
 
     std::ostringstream ss;

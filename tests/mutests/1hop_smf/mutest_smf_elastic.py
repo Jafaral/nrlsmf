@@ -45,11 +45,14 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from onehop_hosts import cleanup_iperf
 from onehop_hosts import setup_mcast_route
 from onehop_hosts import start_mcast_client
 from onehop_hosts import start_mcast_server
 from onehop_hosts import wait_mcast_receiver
+from smf_cli import check_common_show
+from smf_cli import check_show_groups
 
 MCAST_GROUP = "239.0.0.1"
 
@@ -108,6 +111,10 @@ wait_step(
     desc='nrlsmf-elastic.log contains the implicit "push:eth1" sub-group',
 )
 
+section("nrlsmf --cli show commands (json)")
+
+check_common_show("r0", group_name="net", ifaces=("eth0", "eth1"))
+
 section("Multicast from h0 is rate-limited by EM before reaching h1")
 
 setup_mcast_route(step)
@@ -121,6 +128,10 @@ wait_mcast_receiver(
     desc="h1 receiving 239.0.0.1 rate-limited by EM to 1 pps",
     timeout=30,
 )
+
+section("nrlsmf --cli show groups json (active EM flow)")
+
+check_show_groups("r0", mcast_addr=MCAST_GROUP)
 
 section("Cleanup")
 

@@ -52,11 +52,15 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from four_peer_hosts import cleanup_iperf
 from four_peer_hosts import setup_host_lan
 from four_peer_hosts import start_host_mcast_client
 from four_peer_hosts import start_overlay_mcast_servers
 from four_peer_hosts import wait_overlay_mcast_receivers
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
 
 # Two independent P2P GRE pairs, sharing the four-router underlay
 # topology. Each pair gets its own /30 overlay subnet so the two
@@ -206,6 +210,31 @@ for name in UNDERLAY:
         match="overlay",
         desc=f"{name} nrlsmf log shows overlay group",
         timeout=20,
+    )
+
+section("nrlsmf --cli show tunnel / neighbors (json, kernel-learned P2P)")
+
+# No map: Local/Remote come from the GRE device. P2P GRE is NOARP, so
+# overlay pings do not install Neighbor IP; the kernel remote is listed.
+for a, b in PAIRS:
+    inst_a = f"smf-{a}-p2p"
+    inst_b = f"smf-{b}-p2p"
+    check_common_show(a, inst_a, group_name="overlay", ifaces=("eth1", GRE_DEV))
+    check_show_tunnel(
+        a, inst_a, GRE_DEV,
+        local=UNDERLAY[a], remotes=[UNDERLAY[b]], overlay_ip=OVERLAY[a], want_c=False,
+    )
+    check_show_neighbors(
+        a, inst_a, GRE_DEV,
+        remotes=[UNDERLAY[b]], min_count=1,
+    )
+    check_show_tunnel(
+        b, inst_b, GRE_DEV,
+        local=UNDERLAY[b], remotes=[UNDERLAY[a]], overlay_ip=OVERLAY[b], want_c=False,
+    )
+    check_show_neighbors(
+        b, inst_b, GRE_DEV,
+        remotes=[UNDERLAY[a]], min_count=1,
     )
 
 # h0 is the source (off r0); h1 (off r1) is the receiver for this pair.

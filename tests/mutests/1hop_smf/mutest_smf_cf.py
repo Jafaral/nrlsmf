@@ -45,11 +45,13 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from onehop_hosts import cleanup_iperf
 from onehop_hosts import setup_mcast_route
 from onehop_hosts import start_mcast_client
 from onehop_hosts import start_mcast_server
 from onehop_hosts import wait_mcast_receiver
+from smf_cli import check_common_show
 
 MCAST_GROUP = "239.0.0.1"
 
@@ -102,6 +104,10 @@ wait_step(
     match='"push:eth1" eth1',
     desc='nrlsmf-cf.log contains the implicit "push:eth1" sub-group',
 )
+
+section("nrlsmf --cli show commands (json)")
+
+check_common_show("r0", group_name="net", ifaces=("eth0", "eth1"))
 
 section("Multicast from h0 reaches h1 via classical flooding on r0")
 

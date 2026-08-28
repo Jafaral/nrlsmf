@@ -72,6 +72,9 @@ from chained_hosts import start_host_mcast_client
 from chained_hosts import start_overlay_mcast_servers
 from chained_hosts import wait_overlay_mcast_receivers
 from kernel_compat import min_kernel_version
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
 
 # ---------------------------------------------------------------------
 # cloud0 (u0): static NBMA mGRE -- A, A2, B
@@ -457,6 +460,89 @@ for name in ("A", "A2", "B", "B2", "C", "C2", "D", "E", "E2", "F"):
         desc=f"{name} nrlsmf log shows overlay group",
         timeout=20,
     )
+
+section("nrlsmf --cli show tunnel / neighbors (json, all five GRE modes)")
+
+# cloud0 static NBMA: A learns from neigh; A2 has explicit maps.
+check_common_show("A", "smf-A", group_name="overlay", ifaces=("eth1", GRE_C0))
+check_show_tunnel(
+    "A", "smf-A", GRE_C0,
+    local=C0_PEERS["A"]["underlay"],
+    remotes=[C0_PEERS["A2"]["underlay"], C0_PEERS["B"]["underlay"]],
+    overlay_ip=C0_PEERS["A"]["overlay"],
+)
+check_show_neighbors(
+    "A", "smf-A", GRE_C0,
+    remotes=[C0_PEERS["A2"]["underlay"], C0_PEERS["B"]["underlay"]],
+    neighbor_ips=[C0_PEERS["A2"]["overlay"], C0_PEERS["B"]["overlay"]],
+    min_count=2,
+)
+check_show_tunnel(
+    "A2", "smf-A2", GRE_C0,
+    local=C0_PEERS["A2"]["underlay"],
+    remotes=[C0_PEERS["A"]["underlay"], C0_PEERS["B"]["underlay"]],
+    overlay_ip=C0_PEERS["A2"]["overlay"],
+    want_c=True,
+)
+check_show_neighbors(
+    "A2", "smf-A2", GRE_C0,
+    remotes=[C0_PEERS["A"]["underlay"], C0_PEERS["B"]["underlay"]],
+    neighbor_ips=[C0_PEERS["A"]["overlay"], C0_PEERS["B"]["overlay"]],
+    min_count=2,
+    want_c=True,
+)
+
+# cloud1 NHRP: hub B2 sees both spokes.
+check_show_neighbors(
+    "B2", "smf-B2", GRE_C1,
+    remotes=[C1_PEERS["B"]["underlay"], C1_PEERS["C"]["underlay"]],
+    neighbor_ips=[C1_PEERS["B"]["overlay"], C1_PEERS["C"]["overlay"]],
+    min_count=2,
+)
+check_show_neighbors(
+    "B", "smf-B", GRE_C1,
+    remotes=[C1_PEERS["B2"]["underlay"]],
+    neighbor_ips=[C1_PEERS["B2"]["overlay"]],
+    min_count=1,
+)
+
+# cloud2 multicast-underlay remote.
+check_show_tunnel(
+    "C2", "smf-C2", GRE_C2,
+    local=C2_PEERS["C2"]["underlay"],
+    remotes=[UNDERLAY_MCAST_C2],
+    overlay_ip=C2_PEERS["C2"]["overlay"],
+    want_c=False,
+)
+
+# cloud3 P2P: kernel-learned single remote, no map.
+check_show_tunnel(
+    "D", "smf-D", GRE_P2P,
+    local=P2P_PEERS["D"]["underlay"],
+    remotes=[P2P_PEERS["E"]["underlay"]],
+    overlay_ip=P2P_PEERS["D"]["overlay"],
+    want_c=False,
+)
+check_show_neighbors(
+    "D", "smf-D", GRE_P2P,
+    remotes=[P2P_PEERS["E"]["underlay"]],
+    min_count=1,
+)
+
+# cloud4 external GRE: explicit maps, no neigh table.
+check_show_tunnel(
+    "F", "smf-F", GRE_C4,
+    local=C4_PEERS["F"]["underlay"],
+    remotes=[C4_PEERS["E"]["underlay"], C4_PEERS["E2"]["underlay"]],
+    overlay_ip=C4_PEERS["F"]["overlay"],
+    want_c=True,
+)
+check_show_neighbors(
+    "F", "smf-F", GRE_C4,
+    remotes=[C4_PEERS["E"]["underlay"], C4_PEERS["E2"]["underlay"]],
+    min_count=2,
+    want_c=True,
+)
 
 section("Overlay multicast: ha -> ha2 / hb2 / hc2 / hf")
 

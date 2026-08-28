@@ -59,12 +59,16 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from four_peer_hosts import RECV_HOSTS
 from four_peer_hosts import cleanup_iperf
 from four_peer_hosts import setup_host_lan
 from four_peer_hosts import start_host_mcast_client
 from four_peer_hosts import start_overlay_mcast_servers
 from four_peer_hosts import wait_overlay_mcast_receivers
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
 
 ROUTERS = {
     "r0": {"underlay": "10.0.0.2", "overlay": "172.16.0.1"},
@@ -237,6 +241,26 @@ for name in ROUTERS:
         match="overlay",
         desc=f"{name} nrlsmf log shows overlay group",
         timeout=20,
+    )
+
+section("nrlsmf --cli show tunnel / neighbors (json, multicast-underlay remote)")
+
+check_common_show("u0", "smf-u0-underlay", group_name="merge")
+for name, cfg in ROUTERS.items():
+    inst = f"smf-{name}-mcast"
+    check_common_show(name, inst, group_name="overlay", ifaces=("eth1", GRE_DEV))
+    check_show_tunnel(
+        name, inst, GRE_DEV,
+        local=cfg["underlay"],
+        remotes=[UNDERLAY_MCAST],
+        overlay_ip=cfg["overlay"],
+        want_c=False,
+    )
+    # Device remote is the underlay group. NOARP, so no per-peer overlay neigh.
+    check_show_neighbors(
+        name, inst, GRE_DEV,
+        remotes=[UNDERLAY_MCAST],
+        min_count=1,
     )
 
 section("[Mcast] Overlay multicast: h0 -> SMF -> h1/h2/h3")

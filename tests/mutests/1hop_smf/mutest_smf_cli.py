@@ -113,4 +113,15 @@ ambiguous_cmd_output = step("r0", "sh -lc 'nrlsmf r; echo EXIT:$?'")
 test_step("Usage: nrlsmf" in ambiguous_cmd_output, "ambiguous command prints usage", target="r0")
 test_step("EXIT:0" not in ambiguous_cmd_output, "ambiguous command exits non-zero", target="r0")
 
+section("nrlsmf --cli local help (no running daemon)")
+
+cli_help = step("r0", "sh -lc 'nrlsmf --cli -h; echo EXIT:$?'")
+test_step("Usage: nrlsmf --cli" in cli_help, "nrlsmf --cli -h prints usage", target="r0")
+test_step("EXIT:0" in cli_help, "nrlsmf --cli -h exits successfully", target="r0")
+
+cli_show_help = step("r0", "sh -lc 'nrlsmf --cli ?; echo EXIT:$?'")
+test_step("show statistics" in cli_show_help, "nrlsmf --cli ? lists show statistics", target="r0")
+test_step("show tunnel" in cli_show_help, "nrlsmf --cli ? lists show tunnel", target="r0")
+test_step("EXIT:0" in cli_show_help, "nrlsmf --cli ? exits successfully", target="r0")
+
 test_step(True, "nrlsmf CLI sanity checks completed")

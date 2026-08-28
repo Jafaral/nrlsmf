@@ -41,12 +41,16 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from mixed_hosts import RECV_HOSTS
 from mixed_hosts import cleanup_iperf
 from mixed_hosts import setup_host_lan
 from mixed_hosts import start_host_mcast_client
 from mixed_hosts import start_overlay_mcast_servers
 from mixed_hosts import wait_overlay_mcast_receivers
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
 
 ROUTERS = {
     "r0": {"underlay": "10.0.0.2", "overlay": "172.16.0.1"},
@@ -264,6 +268,32 @@ for name, cfg in ROUTERS.items():
         match="overlay",
         desc=f"{name} nrlsmf log shows overlay group",
         timeout=20,
+    )
+
+section("nrlsmf --cli show tunnel / neighbors (json, mixed inject dests)")
+
+# r0/r1/r2 map underlay mcast + unicast-only remotes; r3/r4 map every other
+# router as unicast. Overlay pings populate Neighbor IP from kernel neigh.
+for name, cfg in ROUTERS.items():
+    inst = f"smf-{name}-mixed"
+    check_common_show(name, inst, group_name="overlay", ifaces=("eth1", GRE_DEV))
+    if name in MCAST_ROUTERS:
+        remotes = [UNDERLAY_MCAST] + [ROUTERS[p]["underlay"] for p in UCAST_ONLY]
+    else:
+        remotes = [ocfg["underlay"] for other, ocfg in ROUTERS.items() if other != name]
+    check_show_tunnel(
+        name, inst, GRE_DEV,
+        local=cfg["underlay"],
+        remotes=remotes,
+        overlay_ip=cfg["overlay"],
+        want_c=True,
+    )
+    check_show_neighbors(
+        name, inst, GRE_DEV,
+        remotes=remotes,
+        neighbor_ips=[ocfg["overlay"] for other, ocfg in ROUTERS.items() if other != name],
+        min_count=len(remotes),
+        want_c=True,
     )
 
 section("[Mixed] Overlay multicast: h0 -> SMF -> h1/h2/h3/h4")

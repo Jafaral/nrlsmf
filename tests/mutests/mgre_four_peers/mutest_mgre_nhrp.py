@@ -79,12 +79,16 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from four_peer_hosts import RECV_HOSTS
 from four_peer_hosts import cleanup_iperf
 from four_peer_hosts import setup_host_lan
 from four_peer_hosts import start_host_mcast_client
 from four_peer_hosts import start_overlay_mcast_servers
 from four_peer_hosts import wait_overlay_mcast_receivers
+from smf_cli import check_common_show
+from smf_cli import check_show_neighbors
+from smf_cli import check_show_tunnel
 
 # Underlay LAN addressing (matches */etc.frr/frr.conf). Overlay/tunnel
 # addresses are deliberately drawn from a separate 10.100.0.0/24 range
@@ -322,6 +326,41 @@ for name, cfg in ROUTERS.items():
         desc=f"{name} nrlsmf log shows overlay group",
         timeout=20,
     )
+
+section("nrlsmf --cli show tunnel / neighbors (json, NHRP map dynamic)")
+
+# Spokes see the NHS; the hub sees every registered spoke. Overlay Neighbor IP
+# comes from nhrpd's kernel neigh; C is not required (dynamic, not explicit map).
+for name in SPOKES:
+    inst = f"smf-{name}"
+    check_common_show(name, inst, group_name="overlay", ifaces=("eth1", GRE_DEV))
+    check_show_tunnel(
+        name, inst, GRE_DEV,
+        local=ROUTERS[name]["underlay"],
+        remotes=[ROUTERS[HUB]["underlay"]],
+        overlay_ip=ROUTERS[name]["overlay"],
+    )
+    check_show_neighbors(
+        name, inst, GRE_DEV,
+        remotes=[ROUTERS[HUB]["underlay"]],
+        neighbor_ips=[ROUTERS[HUB]["overlay"]],
+        min_count=1,
+    )
+
+hub_inst = f"smf-{HUB}"
+check_common_show(HUB, hub_inst, group_name="overlay", ifaces=("eth1", GRE_DEV))
+check_show_tunnel(
+    HUB, hub_inst, GRE_DEV,
+    local=ROUTERS[HUB]["underlay"],
+    remotes=[ROUTERS[s]["underlay"] for s in SPOKES],
+    overlay_ip=ROUTERS[HUB]["overlay"],
+)
+check_show_neighbors(
+    HUB, hub_inst, GRE_DEV,
+    remotes=[ROUTERS[s]["underlay"] for s in SPOKES],
+    neighbor_ips=[ROUTERS[s]["overlay"] for s in SPOKES],
+    min_count=3,
+)
 
 section("[NHRP] Overlay multicast: h0 -> r0 -> hub -> h1/h2/h3")
 

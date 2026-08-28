@@ -44,11 +44,14 @@ from munet.mutest.userapi import wait_step
 import sys
 
 sys.path.insert(0, str(script_dir()))
+sys.path.insert(0, str(script_dir().parent))
 from onehop_hosts import cleanup_iperf
 from onehop_hosts import setup_mcast_route
 from onehop_hosts import start_mcast_client
 from onehop_hosts import start_mcast_server
 from onehop_hosts import wait_mcast_receiver
+from smf_cli import check_common_show
+from smf_cli import show_json
 
 MCAST_GROUP = "239.0.0.1"
 
@@ -90,41 +93,19 @@ wait_step(
     desc="nrlsmf-merge.log contains merge group for eth0,eth1",
 )
 
-section("nrlsmf --cli show commands")
+section("nrlsmf --cli show commands (json)")
 
+check_common_show("r0", group_name="merge", ifaces=("eth0", "eth1"))
+tunnels = show_json("r0", "show tunnel")
+test_step(isinstance(tunnels, list), "r0 show tunnel json is a list", target="r0")
+neighbors = show_json("r0", "show tunnel neighbors")
+test_step(isinstance(neighbors, list) and len(neighbors) == 0,
+          "r0 show tunnel neighbors json is empty (no GRE)", target="r0")
 wait_step(
     "r0",
-    "nrlsmf --cli -c ping",
-    match="pong",
-    desc="nrlsmf --cli ping returns pong",
-    timeout=10,
-)
-wait_step(
-    "r0",
-    'nrlsmf --cli -c "show version"',
-    match="smf version:",
-    desc="nrlsmf --cli show version",
-    timeout=10,
-)
-wait_step(
-    "r0",
-    'nrlsmf --cli -c "show statistics"',
-    match="Interface",
-    desc="nrlsmf --cli show statistics",
-    timeout=10,
-)
-wait_step(
-    "r0",
-    'nrlsmf --cli -c "show interface grouping"',
-    match="GroupName",
-    desc="nrlsmf --cli show interface grouping",
-    timeout=10,
-)
-wait_step(
-    "r0",
-    'nrlsmf --cli -c "show version" -c "show statistics"',
-    match="Interface",
-    desc="nrlsmf --cli multiple -c commands",
+    'nrlsmf --cli -c "show version json" -c "show statistics json"',
+    match="jsonVersion",
+    desc="nrlsmf --cli multiple -c commands (json)",
     timeout=10,
 )
 
