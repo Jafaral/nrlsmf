@@ -110,6 +110,8 @@ class SmfApp : public ProtoApp
         void ReplyStats(bool json);
         void ReplyInfo(bool json);
         void ReplyInterfaces(bool json);
+        void ReplyTunnel(bool json);
+        void ReplyTunnelNeighbors(bool json);
 #ifdef ELASTIC_MCAST
         void ReplyGroups(bool json, bool brief);
 #endif // ELASTIC_MCAST
@@ -1268,11 +1270,13 @@ static const struct ShowTopicSpec
     bool        elasticOnly;
 } kShowTopics[] =
 {
-    { "version",     NULL,       "nrlsmf version",                     true, false, false, false },
-    { "statistics",  NULL,       "per-interface packet/flow counters", true, false, false, false },
-    { "interface",   NULL,       "configured interfaces",              true, false, false, false },
-    { "interface",   "grouping", "SMF interface groups",               true, false, false, false },
-    { "groups",      NULL,       "elastic multicast groups",           true, true,  false, true  },
+    { "version",     NULL,         "nrlsmf version",                     true, false, false, false },
+    { "statistics",  NULL,         "per-interface packet/flow counters", true, false, false, false },
+    { "interface",   NULL,         "configured interfaces",              true, false, false, false },
+    { "interface",   "grouping",   "SMF interface groups",               true, false, false, false },
+    { "tunnel",      NULL,         "tunnel endpoint mappings",           true, false, false, false },
+    { "tunnel",      "neighbors",  "GRE/mGRE neighbors",                 true, false, false, false },
+    { "groups",      NULL,         "elastic multicast groups",           true, true,  false, true  },
     { NULL, NULL, NULL, false, false, false, false }
 };
 
@@ -1341,6 +1345,8 @@ static void FormatShowHelp(std::ostringstream& ss)
        << "  nrlsmf --cli -c \"show interface\"\n"
        << "  nrlsmf --cli -c \"show interface grouping\"\n"
        << "  nrlsmf --cli -c \"show interface grouping json\"\n"
+       << "  nrlsmf --cli -c \"show tunnel\"\n"
+       << "  nrlsmf --cli -c \"show tunnel neighbors\"\n"
        << "  nrlsmf --cli -c \"show groups brief\"\n"
        << "  nrlsmf --cli -c \"show groups brief json\"\n"
        << "  nrlsmf --cli -i smf-p4 -c \"show interface json\"\n"
@@ -5066,7 +5072,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         {
             iface->SetTunnelLocalAddress(localAddr);
             iface->SetTunnelRemoteAddress(remoteAddr);
-            smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr);
+            smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr, false);
         }
         else
         {
@@ -5946,7 +5952,7 @@ Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceNameAndF
         {
             iface->SetTunnelLocalAddress(localAddr);
             iface->SetTunnelRemoteAddress(remoteAddr);
-            smf.AddTunnelInfo(vifIndex, localAddr, remoteAddr);
+            smf.AddTunnelInfo(vifIndex, localAddr, remoteAddr, false);
         }
         else
         {
@@ -6538,6 +6544,275 @@ void SmfApp::ReplyInterfaces(bool json)
     ControlReply(ss.str());
 }
 
+// C = Config. Neighbor NUD letters (linux/neighbour.h) imply kernel:
+// M Permanent, N NoARP, R Reachable, S Stale, D Delay, P Probe,
+// I Incomplete, F Failed.
+static void FormatTunnelFlags(char* buf, size_t bufLen, bool fromConfig,
+                              unsigned short nudState = 0)
+{
+    size_t n = 0;
+    if (fromConfig && (n + 1 < bufLen)) buf[n++] = 'C';
+    char nud = '\0';
+    if (nudState & 0x80)      nud = 'M';
+    else if (nudState & 0x40) nud = 'N';
+    else if (nudState & 0x02) nud = 'R';
+    else if (nudState & 0x04) nud = 'S';
+    else if (nudState & 0x08) nud = 'D';
+    else if (nudState & 0x10) nud = 'P';
+    else if (nudState & 0x01) nud = 'I';
+    else if (nudState & 0x20) nud = 'F';
+    if (nud && (n + 1 < bufLen)) buf[n++] = nud;
+    if (bufLen > 0) buf[n] = '\0';
+}
+
+static bool TunnelAddrUnspecified(const ProtoAddress& addr)
+{
+    if (!addr.IsValid())
+        return true;
+    return addr.HostIsEqual(PROTO_ADDR_ANY) || addr.HostIsEqual(PROTO_ADDR_ANY6);
+}
+
+static bool SameHostAddr(const ProtoAddress& a, const ProtoAddress& b)
+{
+    return a.IsValid() && b.IsValid() && a.HostIsEqual(b);
+}
+
+static void FormatAddrOrDash(const ProtoAddress& addr, char* buf, size_t bufLen)
+{
+    if (TunnelAddrUnspecified(addr))
+        strncpy(buf, "-", bufLen);
+    else
+        addr.GetHostString(buf, bufLen);
+    buf[bufLen - 1] = '\0';
+}
+
+static void TunnelOverlayLocal(Smf::Interface* iface, ProtoAddress& overlay)
+{
+    if (NULL == iface)
+        return;
+    const ProtoAddress& ip = iface->GetIpAddress();
+    if (ip.IsValid() && (ProtoAddress::ETH != ip.GetType()))
+    {
+        overlay = ip;
+        return;
+    }
+    ProtoAddressList::Iterator it(iface->AccessAddressList());
+    ProtoAddress addr;
+    while (it.GetNextAddress(addr))
+    {
+        if ((ProtoAddress::IPv4 == addr.GetType()) || (ProtoAddress::IPv6 == addr.GetType()))
+        {
+            overlay = addr;
+            return;
+        }
+    }
+}
+
+void SmfApp::ReplyTunnel(bool json)
+{
+    std::ostringstream ss;
+    Smf::InterfaceInfoTable::Iterator it(smf.AccessInterfaceInfoTable());
+    Smf::InterfaceInfo* info;
+    if (json)
+    {
+        ss << "[";
+        bool comma = false;
+        while (NULL != (info = it.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[0] = '\0';
+            ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+            char localStr[64];
+            char remoteStr[64];
+            char overlayStr[64];
+            info->GetLocalAddress().GetHostString(localStr, sizeof(localStr));
+            FormatAddrOrDash(info->GetRemoteAddress(), remoteStr, sizeof(remoteStr));
+            ProtoAddress overlay;
+            if (info->GetRemoteAddress().IsValid())
+                TunnelOverlayLocal(smf.GetInterface(info->GetIndex()), overlay);
+            FormatAddrOrDash(overlay, overlayStr, sizeof(overlayStr));
+            char flags[8];
+            FormatTunnelFlags(flags, sizeof(flags), info->FromConfig());
+            ss << (comma ? "," : "") << "{";
+            ss << "\"Interface\":\"" << ifaceName << "\",";
+            ss << "\"Local\":\"" << localStr << "\",";
+            ss << "\"Remote\":\"" << remoteStr << "\",";
+            ss << "\"IP\":\"" << overlayStr << "\",";
+            ss << "\"Flags\":\"" << flags << "\"";
+            ss << "}";
+            comma = true;
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "Flags: C = Config\n";
+        ss << "Local/Remote are underlay tunnel endpoints; IP is the local overlay address.\n\n";
+        ss << "Interface        Local            Remote           IP               Flags\n";
+        ss << "---------------- ---------------- ---------------- ---------------- -----\n";
+        while (NULL != (info = it.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[0] = '\0';
+            ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+            char localStr[64];
+            char remoteStr[64];
+            char overlayStr[64];
+            info->GetLocalAddress().GetHostString(localStr, sizeof(localStr));
+            FormatAddrOrDash(info->GetRemoteAddress(), remoteStr, sizeof(remoteStr));
+            ProtoAddress overlay;
+            if (info->GetRemoteAddress().IsValid())
+                TunnelOverlayLocal(smf.GetInterface(info->GetIndex()), overlay);
+            FormatAddrOrDash(overlay, overlayStr, sizeof(overlayStr));
+            char flags[8];
+            FormatTunnelFlags(flags, sizeof(flags), info->FromConfig());
+            ss << std::left << std::setw(16) << ifaceName << " ";
+            ss << std::setw(16) << localStr << " ";
+            ss << std::setw(16) << remoteStr << " ";
+            ss << std::setw(16) << overlayStr << " ";
+            ss << flags << "\n";
+        }
+    }
+    ControlReply(ss.str());
+}
+
+struct TunnelNeighRow
+{
+    unsigned int   ifIndex;
+    ProtoAddress   overlay_remote;   // kernel neigh dst
+    ProtoAddress   underlay_remote;  // kernel neigh lladdr / mapped GRE remote
+    unsigned short state;
+    bool           from_config;
+    bool           from_kernel;
+};
+
+struct ShowNeighDump
+{
+    std::vector<TunnelNeighRow>* rows;
+};
+
+static bool ShowNeighHandler(unsigned int         ifIndex,
+                             const ProtoAddress&  dst,
+                             const ProtoAddress&  lladdr,
+                             unsigned short       ndmState,
+                             void*                userData)
+{
+    ShowNeighDump* ctx = static_cast<ShowNeighDump*>(userData);
+    TunnelNeighRow row;
+    row.ifIndex = ifIndex;
+    row.overlay_remote = dst;
+    row.underlay_remote = lladdr;
+    row.state = ndmState;
+    row.from_config = false;
+    row.from_kernel = true;
+    ctx->rows->push_back(row);
+    return true;
+}
+
+static void MarkTunnelNeighbor(std::vector<TunnelNeighRow>& rows,
+                               unsigned int ifIndex,
+                               const ProtoAddress& peer,
+                               bool fromConfig,
+                               bool fromKernel)
+{
+    bool found = false;
+    for (size_t i = 0; i < rows.size(); i++)
+    {
+        if (rows[i].ifIndex != ifIndex)
+            continue;
+        if (SameHostAddr(rows[i].underlay_remote, peer) || SameHostAddr(rows[i].overlay_remote, peer))
+        {
+            if (fromConfig)
+                rows[i].from_config = true;
+            if (fromKernel)
+                rows[i].from_kernel = true;
+            found = true;
+        }
+    }
+    if (found)
+        return;
+    TunnelNeighRow row;
+    row.ifIndex = ifIndex;
+    row.underlay_remote = peer;
+    row.state = 0;
+    row.from_config = fromConfig;
+    row.from_kernel = fromKernel;
+    rows.push_back(row);
+}
+
+void SmfApp::ReplyTunnelNeighbors(bool json)
+{
+    std::vector<TunnelNeighRow> rows;
+    ShowNeighDump ctx;
+    ctx.rows = &rows;
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* iface;
+    while (NULL != (iface = iterator.GetNextItem()))
+    {
+        if (ProtoNet::IFACE_GRE != ProtoNet::GetInterfaceType(iface->GetIndex()))
+            continue;
+        ProtoNet::GetInterfaceNeighbors(iface->GetIndex(), ShowNeighHandler, &ctx);
+    }
+    Smf::InterfaceInfoTable::Iterator it(smf.AccessInterfaceInfoTable());
+    Smf::InterfaceInfo* info;
+    while (NULL != (info = it.GetNextItem()))
+    {
+        const ProtoAddress& remote = info->GetRemoteAddress();
+        if (TunnelAddrUnspecified(remote))
+            continue;
+        if (info->FromConfig())
+            MarkTunnelNeighbor(rows, info->GetIndex(), remote, true, info->FromKernel());
+    }
+
+    std::ostringstream ss;
+    if (json)
+    {
+        ss << "[";
+    }
+    else
+    {
+        ss << "Flags: C = Config, R = Reachable, S = Stale, D = Delay, P = Probe,\n"
+           << "       I = Incomplete, F = Failed, N = NoARP, M = Permanent\n"
+           << "Neighbor IP is the peer overlay address; Remote is the peer underlay.\n\n";
+        ss << "Interface        Neighbor IP      Remote           Flags\n"
+           << "---------------- ---------------- ---------------- -----\n";
+    }
+    bool comma = false;
+    for (size_t i = 0; i < rows.size(); i++)
+    {
+        const TunnelNeighRow& row = rows[i];
+        char ifaceName[Smf::IF_NAME_MAX + 1];
+        ifaceName[0] = '\0';
+        ProtoNet::GetInterfaceName(row.ifIndex, ifaceName, Smf::IF_NAME_MAX);
+        char overlayStr[64];
+        char remoteStr[64];
+        FormatAddrOrDash(row.overlay_remote, overlayStr, sizeof(overlayStr));
+        FormatAddrOrDash(row.underlay_remote, remoteStr, sizeof(remoteStr));
+        char flags[8];
+        FormatTunnelFlags(flags, sizeof(flags), row.from_config, row.state);
+        if (json)
+        {
+            ss << (comma ? "," : "") << "{";
+            ss << "\"Interface\":\"" << ifaceName << "\",";
+            ss << "\"NeighborIP\":\"" << overlayStr << "\",";
+            ss << "\"Remote\":\"" << remoteStr << "\",";
+            ss << "\"Flags\":\"" << flags << "\"";
+            ss << "}";
+            comma = true;
+        }
+        else
+        {
+            ss << std::left << std::setw(16) << ifaceName << " ";
+            ss << std::setw(16) << overlayStr << " ";
+            ss << std::setw(16) << remoteStr << " ";
+            ss << flags << "\n";
+        }
+    }
+    if (json)
+        ss << "]\n";
+    ControlReply(ss.str());
+}
+
 #ifdef ELASTIC_MCAST
 void SmfApp::ReplyGroups(bool json, bool brief)
 {
@@ -6658,6 +6933,10 @@ void SmfApp::OnShowCommand(const char* arg)
         ReplyInfo(json);
     else if (0 == strcmp(topic, "interface"))
         ReplyInterfaces(json);
+    else if ((0 == strcmp(topic, "tunnel")) && (NULL != sub) && (0 == strcmp(sub, "neighbors")))
+        ReplyTunnelNeighbors(json);
+    else if (0 == strcmp(topic, "tunnel"))
+        ReplyTunnel(json);
     else if (0 == strcmp(topic, "groups"))
     {
 #ifdef ELASTIC_MCAST
@@ -6671,7 +6950,8 @@ void SmfApp::OnShowCommand(const char* arg)
 
 /* These are the messages that come in through the server socket
  *   "show <command> [brief|details] [json]"  modern CLI status query
- *   e.g. show statistics, show interface, show interface grouping
+ *   e.g. show statistics, show interface, show interface grouping,
+ *        show tunnel, show tunnel neighbors
  *   legacy: jsonInfo, jsonStats, jsonVersion, ping, stats, info,
  *           interfaces, interfacesj, groups, groupsj, brfgroups, brfgroupsj
  */
@@ -8292,7 +8572,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                     iface->SetTunnelLocalAddress(localAddr);
                     iface->SetTunnelRemoteAddress(remoteAddr);
                     // not "remoteAddr" may be INADDR_ANY for mGRE tunnels
-                    smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr);
+                    smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr, false);
                 }
                 else
                 {

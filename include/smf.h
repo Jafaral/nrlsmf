@@ -109,8 +109,10 @@ class Smf
                 InterfaceInfo(unsigned int          ifaceIndex,
                               const ProtoAddress&   localAddr,
                               const ProtoAddress*   remoteAddr = NULL,
-                              bool                  mapped = false)
-                  : iface_index(ifaceIndex), local_addr(localAddr), is_mapped(mapped), is_learned(false)
+                              bool                  fromConfig = false,
+                              bool                  fromKernel = false)
+                  : iface_index(ifaceIndex), local_addr(localAddr),
+                    from_config(fromConfig), from_kernel(fromKernel), is_learned(false)
                 {
                     // address_info_key is tuple of [remoteAddr]localAddr  (i.e. remoteAddr is optional)
                     unsigned int len = 0;
@@ -129,14 +131,18 @@ class Smf
                 ~InterfaceInfo() {}
                 void SetIndex(unsigned int index) {iface_index = index;}
                 void SetMaskLength(unsigned int maskLen) {local_mask_len = maskLen;}
+                void MarkConfig() {from_config = true;}
+                void MarkKernel() {from_kernel = true;}
                 unsigned int GetIndex() const {return iface_index;}
                 unsigned int GetMaskLength() const {return local_mask_len;}
                 const ProtoAddress& GetLocalAddress() const {return local_addr;}
                 const ProtoAddress& GetRemoteAddress() const {return remote_addr;}
-                void SetMapped(bool state) {is_mapped = state;}
-                bool IsMapped() const {return is_mapped;}
+                void SetMapped(bool state) {from_config = state;}
+                bool IsMapped() const {return from_config;}
                 void SetLearned(bool state) {is_learned = state;}
                 bool IsLearned() const {return is_learned;}
+                bool FromConfig() const {return from_config;}
+                bool FromKernel() const {return from_kernel;}
 
             private:
                // Required ProtoTreeItem overrides
@@ -147,7 +153,8 @@ class Smf
                 ProtoAddress local_addr;
                 unsigned int local_mask_len;
                 ProtoAddress remote_addr;             // invalid for non-tunnels, INADDR_ANY for mGRE tunnels
-                bool         is_mapped;               // true for explicit "map" command
+                bool         from_config;             // true if added with the map command
+                bool         from_kernel;             // true if learned from GRE device attributes
                 bool         is_learned;              // true for kernel-neigh learned remotes (map ...,dynamic)
                 char         address_info_key[16+16]; // big enough for IPv6
                 unsigned int address_info_size;       // in bits
@@ -159,12 +166,13 @@ class Smf
                 InterfaceInfo* InsertIndex(unsigned int         ifaceIndex,
                                            const ProtoAddress&  localAddr,
                                            const ProtoAddress*  remoteAddr = NULL,
-                                           bool                 mapped = false)
+                                           bool                 fromConfig = false,
+                                           bool                 fromKernel = false)
                 {
                     InterfaceInfo* info = (NULL == remoteAddr) ? FindInfo(localAddr) : FindInfo(localAddr, *remoteAddr);
                     if (NULL == info)
                     {
-                        info = new InterfaceInfo(ifaceIndex, localAddr, remoteAddr, mapped);
+                        info = new InterfaceInfo(ifaceIndex, localAddr, remoteAddr, fromConfig, fromKernel);
                         if (NULL == info)
                         {
                             PLOG(PL_ERROR, "InterfaceInfoTable::InsertIndex() new InterfaceInfo error: %s\n", GetErrorString());
@@ -179,6 +187,8 @@ class Smf
                     else
                     {
                         info->SetIndex(ifaceIndex);
+                        if (fromConfig) info->MarkConfig();
+                        if (fromKernel) info->MarkKernel();
                     }
                     return info;
                 }
@@ -285,7 +295,9 @@ class Smf
         {
             TRACE("mapping tunnel addrs local:%s", localAddr.GetHostString());
             TRACE(" remote:%s\n", remoteAddr.GetHostString());
-            InterfaceInfo* ifaceInfo =  iface_info_table.InsertIndex(ifaceIndex, localAddr, &remoteAddr, mapped);
+            bool fromKernel = !mapped && !learned;
+            InterfaceInfo* ifaceInfo = iface_info_table.InsertIndex(ifaceIndex, localAddr, &remoteAddr,
+                                                                    mapped, fromKernel);
             if (NULL == ifaceInfo)
             {
                 PLOG(PL_ERROR, "Smf::AddTunnelInfo() iface_info_table.InsertIndex() failed\n");
