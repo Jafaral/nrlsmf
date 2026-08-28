@@ -90,6 +90,44 @@ wait_step(
     desc="nrlsmf-merge.log contains merge group for eth0,eth1",
 )
 
+section("nrlsmf --cli show commands")
+
+wait_step(
+    "r0",
+    "nrlsmf --cli -c ping",
+    match="pong",
+    desc="nrlsmf --cli ping returns pong",
+    timeout=10,
+)
+wait_step(
+    "r0",
+    'nrlsmf --cli -c "show version"',
+    match="smf version:",
+    desc="nrlsmf --cli show version",
+    timeout=10,
+)
+wait_step(
+    "r0",
+    'nrlsmf --cli -c "show statistics"',
+    match="Interface",
+    desc="nrlsmf --cli show statistics",
+    timeout=10,
+)
+wait_step(
+    "r0",
+    'nrlsmf --cli -c "show interface grouping"',
+    match="GroupName",
+    desc="nrlsmf --cli show interface grouping",
+    timeout=10,
+)
+wait_step(
+    "r0",
+    'nrlsmf --cli -c "show version" -c "show statistics"',
+    match="Interface",
+    desc="nrlsmf --cli multiple -c commands",
+    timeout=10,
+)
+
 section("Multicast from h0 reaches h1 via merge relay on r0")
 
 setup_mcast_route(step)
