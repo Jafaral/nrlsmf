@@ -2395,8 +2395,10 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
     <literal>interface</literal>, <literal>interface grouping</literal>
     (a subcommand of <literal>interface</literal>),
     <literal>tunnel</literal>, <literal>tunnel neighbors</literal>
-    (GRE/mGRE neighbors from configuration and/or the kernel), and
-    <literal>groups</literal>. The unmodified command is the default listing.
+    (GRE/mGRE neighbors from configuration and/or the kernel),
+    <literal>groups</literal>, <literal>groups memberships</literal>,
+    and <literal>igmp groups</literal>. The last three require an Elastic
+    Multicast build. The unmodified command is the default listing.
     Optional modifiers are command-specific. <literal>brief</literal> requests
     less output and <literal>details</literal> requests more; a command may
     support none, one, or both. When JSON is wanted, <literal>json</literal>
@@ -2404,11 +2406,83 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</programlisting>
     "<literal>show groups brief json</literal>").
     Older one-shot verbs such as <literal>stats</literal> and
     <literal>groupsj</literal> still work for compatibility. Configuration
-    commands (for example "<literal>nrlsmf --cli -c "debug 2"</literal>") are sent
-    without waiting for a response. Use "<literal>-i</literal>" when the
-    target process was started with a non-default <literal>instance</literal>
-    name. Run "<literal>nrlsmf --cli ?</literal>" for the show-command
-    list.</para>
+    commands (for example "<literal>nrlsmf --cli -c "debug 2"</literal>",
+    "<literal>with-frr</literal>", or "<literal>elastic overlay</literal>")
+    are sent without waiting for a response. Use "<literal>-i</literal>" when
+    the target process was started with a non-default
+    <literal>instance</literal> name. Run "<literal>nrlsmf --cli ?</literal>"
+    for the show-command list.</para>
+
+    <para>On an Elastic build, <literal>show interface</literal> includes
+    flag <literal>M</literal> (JSON <literal>Managed</literal>) when
+    last-hop membership skip is in effect on that interface. The other
+    flags are <literal>L</literal> layered, <literal>T</literal> tunnel,
+    <literal>I</literal> IGMP proxy, and <literal>S</literal>
+    shadowing.</para>
+
+    <para><literal>show groups</literal> lists detected multicast flows.
+    The <literal>fwd</literal> column is the flow default (often
+    <literal>L</literal>, LIMIT, about 1 packet per second).
+    Per-interface FORWARD after an EM_ACK is not that column; use
+    <literal>show groups details</literal>.
+    <literal>recv</literal> is the lifetime packet count.
+    <literal>pps</literal> is over a tumbling window of about 5
+    seconds.</para>
+
+    <programlisting>nrlsmf --cli -i smf-r1 -c "show groups"
+Flags: A = Active, K = Ack
+Fwd: B = Block, H = Hybrid, L = Limit, F = Forward, D = Deny
+group            saddr            iif          flags fwd recv   pps
+---------------- ---------------- ------------ ----- --- ------ ----
+239.0.0.1        192.168.55.2     gre1         AK    L     41   8.8</programlisting>
+
+    <para><literal>show groups details</literal> nests inbound sources
+    and outbound interfaces. <literal>Selected</literal>
+    <literal>Y</literal> is the current upstream.
+    <literal>Why</literal> is <literal>managed</literal> (IGMP or static
+    last hop), <literal>ack</literal> (EM_ACK from a downstream relay),
+    or <literal>-</literal>.</para>
+
+    <programlisting>nrlsmf --cli -i smf-r1 -c "show groups details"
+Flags: A = Active, K = Ack
+Selected: Y = current upstream, N = additional inbound
+Fwd: B = Block, H = Hybrid, L = Limit, F = Forward, D = Deny
+Why: managed = IGMP/static last hop, ack = EM_ACK, - = default
+
+group            saddr            flags ack recv   pps
+---------------- ---------------- ----- --- ------ ----
+239.0.0.1        192.168.55.2     AK    yes 41     8.8
+  sources
+    iif          upstream         sel
+    gre1         10.0.0.2         Y
+  downstream
+    oif          mode     why      fwd sent   pps  relays
+    eth1         elastic  managed  F     41   8.8  -
+    gre1         elastic  ack      F      0   0.0  -</programlisting>
+
+    <para><literal>show groups memberships</literal> is the controller
+    table: <literal>S</literal> static (<literal>join</literal>),
+    <literal>M</literal> managed (IGMP via <literal>with-frr</literal>),
+    <literal>E</literal> elastic (downstream EM_ACK). This is not the
+    last-hop skip list.</para>
+
+    <programlisting>nrlsmf --cli -i smf-r1 -c "show groups memberships"
+Flags: S = Static, M = Managed, E = Elastic
+group            saddr            iface        flags relays
+---------------- ---------------- ------------ ----- ----------------
+239.0.0.1        *                eth1         M     -
+239.0.0.1        192.168.55.2     gre1         E     10.0.0.2</programlisting>
+
+    <para><literal>show igmp groups</literal> is the last-hop list
+    filled by <literal>with-frr</literal>. A managed host interface that
+    does not list the group is not used as a last hop.</para>
+
+    <programlisting>nrlsmf --cli -i smf-r1 -c "show igmp groups"
+Flags: M = Managed (last-hop HasActiveMembership)
+iface         flags groups
+------------  ----- ------
+eth1          M     239.0.0.1
+gre1          -     -</programlisting>
   </sect1>
 
   <sect1>

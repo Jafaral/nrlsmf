@@ -94,7 +94,10 @@ make -f Makefile.linux elastic</pre><p>This will build an <span class="command">
        [resequence {on|off}][ttl &lt;value&gt;][boost {on|off}]
        [debug &lt;debugLevel&gt;][log &lt;logFile&gt;]
 
-Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="ExampleUsage"></a>Usage Examples</h3></div></div></div><p>To run <span class="application">nrlsmf</span> to modify outbound,
+Run "nrlsmf -help" for the complete list of supported commands.
+
+To send a command to an already-running instance:
+nrlsmf --cli [-i &lt;instanceName&gt;] -c "&lt;command&gt;" [-c "&lt;command&gt;" ...]</pre></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="ExampleUsage"></a>Usage Examples</h3></div></div></div><p>To run <span class="application">nrlsmf</span> to modify outbound,
       locally-generated multicast packets for duplicate packet detection
       <span class="emphasis"><em>and</em></span> to use "classical flooding" (CF) forwarding
       rules for packets received/forwarded on MANET interface "eth1":</p><p><code class="literal">nrlsmf resequence on cf eth1</code></p><p>Note that a MANET SMF forwarding rule like "<code class="literal">cf</code>"
@@ -646,7 +649,24 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
             <code class="literal">0.0.0.0</code> is the kernel wildcard
             (INADDR_ANY), not a send destination. Typically this command
             is not needed for point-to-point GRE or multicast-underlay
-            mGRE (the tunnel remote is already the group).</td></tr><tr><td><code class="literal">unmap</code>
+            mGRE (the tunnel remote is already the group). Runtime mappings
+            can be listed with "<code class="literal">show tunnel</code>":
+            <code class="literal">Local</code>/<code class="literal">Remote</code> are underlay
+            tunnel endpoints and <code class="literal">IP</code> is the local overlay
+            address. <code class="literal">C</code> in
+            <code class="literal">Flags</code> means the mapping was added with this
+            command; otherwise it was learned from the kernel. GRE/mGRE
+            neighbors are listed with "<code class="literal">show tunnel
+            neighbors</code>": <code class="literal">Neighbor IP</code> is the peer
+            overlay address and <code class="literal">Remote</code> is the peer
+            underlay. Neighbor flags use <code class="literal">C</code> for
+            configured plus the kernel NUD state:
+            <code class="literal">R</code> reachable, <code class="literal">S</code> stale,
+            <code class="literal">D</code> delay, <code class="literal">P</code> probe,
+            <code class="literal">I</code> incomplete, <code class="literal">F</code> failed,
+            <code class="literal">N</code> no-ARP, <code class="literal">M</code>
+            permanent (for example <code class="literal">CR</code> is configured and
+            reachable).</td></tr><tr><td><code class="literal">unmap</code>
             <br><code class="literal">&lt;iface&gt;,&lt;localAddr&gt;</code>
             <br><code class="literal">[,&lt;remoteAddr&gt;]</code></td><td>Deletes matching tunnel endpoint or interface-&gt;address
             associations previously set up with the <span class="command"><strong>map</strong></span>
@@ -667,7 +687,7 @@ Run "nrlsmf -help" for the complete list of supported commands.</pre></div><div 
     The <span class="application">nrlsmf</span> application has some logic in its
     command-parsing to avoid some of these scenarios, but the flexibility
     allowed permits some configurations that may produce undesirable
-    effects.</p><div class="table"><a name="id1959"></a><p class="title"><b>Table 4. Gateway Commands</b></p><div class="table-contents"><table class="table" summary="Gateway Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">push
+    effects.</p><div class="table"><a name="id1978"></a><p class="title"><b>Table 4. Gateway Commands</b></p><div class="table-contents"><table class="table" summary="Gateway Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">push
             &lt;srcIface&gt;,&lt;dstIfaceList&gt;</code></td><td>Force relay of packets from
             &lt;<code class="literal">srcIface</code>&gt; to listed destination
             interfaces. The <code class="literal">&lt;dstIfaceList&gt;</code> is a
@@ -1069,7 +1089,7 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
         apply (no <code class="literal">ip neigh</code>).</p><p><span class="emphasis"><em>nrlsmf configuration (Node A):</em></span></p><pre class="programlisting">nrlsmf add overlay,cf,gre0 \
        layered gre0 \
        map gre0,10.0.0.2,10.0.1.2 \
-       map gre0,10.0.0.2,10.0.2.2</pre></div><div class="sect3"><div class="titlepage"><div><div><h4 class="title"><a name="GREModeFit"></a>Where Each Mode Fits</h4></div></div></div><div class="table"><a name="id2248"></a><p class="title"><b>Table 5. GRE / mGRE modes</b></p><div class="table-contents"><table class="table" summary="GRE / mGRE modes" border="1"><colgroup><col class="Mode"><col class="Resolution"><col class="Nrlsmf"><col class="Use"></colgroup><thead><tr><th>Mode</th><th>Peer resolution</th><th>nrlsmf extras</th><th>Typical use</th></tr></thead><tbody><tr><td>P2P GRE</td><td>Fixed at setup</td><td>typically <span class="command"><strong>layered</strong></span></td><td>Two fixed sites; MANET-island bridging over a WAN
+       map gre0,10.0.0.2,10.0.2.2</pre></div><div class="sect3"><div class="titlepage"><div><div><h4 class="title"><a name="GREModeFit"></a>Where Each Mode Fits</h4></div></div></div><div class="table"><a name="id2267"></a><p class="title"><b>Table 5. GRE / mGRE modes</b></p><div class="table-contents"><table class="table" summary="GRE / mGRE modes" border="1"><colgroup><col class="Mode"><col class="Resolution"><col class="Nrlsmf"><col class="Use"></colgroup><thead><tr><th>Mode</th><th>Peer resolution</th><th>nrlsmf extras</th><th>Typical use</th></tr></thead><tbody><tr><td>P2P GRE</td><td>Fixed at setup</td><td>typically <span class="command"><strong>layered</strong></span></td><td>Two fixed sites; MANET-island bridging over a WAN
                 hop</td></tr><tr><td>mGRE Mode A (NHRP)</td><td>Dynamic, per-peer unicast (FRR
                 <span class="application">nhrpd</span>)</td><td><code class="literal">map &#8230;,dynamic</code> (or explicit
                 unicast <span class="command"><strong>map</strong></span>s); spokes
@@ -1127,7 +1147,7 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
             transmission per mapped remote (unicast peer or underlay
             group), still using that same relay decision. Overlay GRE
             interfaces are typically <span class="command"><strong>layered</strong></span>; the
-            NHRP hub is not, because it replicates overlay multicast.</p></li></ul></div></div><div class="sect3"><div class="titlepage"><div><div><h4 class="title"><a name="GRETunnelCommands"></a>GRE Tunnel Commands</h4></div></div></div><div class="table"><a name="id2340"></a><p class="title"><b>Table 6. GRE Tunnel Commands</b></p><div class="table-contents"><table class="table" summary="GRE Tunnel Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">map</code>
+            NHRP hub is not, because it replicates overlay multicast.</p></li></ul></div></div><div class="sect3"><div class="titlepage"><div><div><h4 class="title"><a name="GRETunnelCommands"></a>GRE Tunnel Commands</h4></div></div></div><div class="table"><a name="id2359"></a><p class="title"><b>Table 6. GRE Tunnel Commands</b></p><div class="table-contents"><table class="table" summary="GRE Tunnel Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">map</code>
             <br><code class="literal">&lt;iface&gt;,&lt;localAddr&gt;</code>
             <br><code class="literal">[,&lt;remoteAddr&gt;]</code></td><td>Associate tunnel endpoint address information with
                 &lt;<code class="literal">iface</code>&gt;. If
@@ -1171,7 +1191,7 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
                 interface &lt;<code class="literal">iface</code>&gt;.</td></tr></tbody></table></div></div><br class="table-break"></div></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="VirtualInterfaces"></a>Virtual Interface Commands</h3></div></div></div><p>SMF supports virtual interface constructs that associate a
       user-space forwarding path with one or more underlying physical
       interfaces. These are commonly used for host integration, composite
-      devices, and encapsulation.</p><div class="table"><a name="id2387"></a><p class="title"><b>Table 7. Virtual Interface Commands</b></p><div class="table-contents"><table class="table" summary="Virtual Interface Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">device</code>
+      devices, and encapsulation.</p><div class="table"><a name="id2406"></a><p class="title"><b>Table 7. Virtual Interface Commands</b></p><div class="table-contents"><table class="table" summary="Virtual Interface Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">device</code>
             <br><code class="literal">&lt;vifName&gt;,&lt;ifaceName&gt;</code>
             <br><code class="literal">[/{t|r|d}][,&lt;addr&gt;...]</code></td><td>Create a virtual SMF interface (vif) associated with one
               or more physical interfaces. Optional flags on
@@ -1189,7 +1209,7 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
               device operation. (default = on)</td></tr><tr><td><code class="literal">route
               &lt;dstAddr&gt;,&lt;nextHopAddr&gt;</code></td><td>Add a debug route used with encapsulation testing.</td></tr></tbody></table></div></div><br class="table-break"></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="VrfFrr"></a>VRF and FRR Integration</h3></div></div></div><p><span class="application">nrlsmf</span> can associate interfaces with named
       virtual routing and forwarding (VRF) contexts. When run alongside FRR,
-      VRF information may be imported at startup.</p><div class="table"><a name="id2439"></a><p class="title"><b>Table 8. VRF Commands</b></p><div class="table-contents"><table class="table" summary="VRF Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">vrf</code>
+      VRF information may be imported at startup.</p><div class="table"><a name="id2458"></a><p class="title"><b>Table 8. VRF Commands</b></p><div class="table-contents"><table class="table" summary="VRF Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">vrf</code>
             <br><code class="literal">&lt;vrf-name&gt;,</code>
             <br><code class="literal">[&lt;vrf-id&gt;,]&lt;ifaceList&gt;</code></td><td>Associate one or more interfaces with the named VRF. An
               optional numeric VRF identifier may be supplied.</td></tr><tr><td><code class="literal">with-frr</code></td><td>Run alongside FRR and pull configuration where appropriate,
@@ -1197,7 +1217,7 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
               command line.</td></tr></tbody></table></div></div><br class="table-break"></div><div class="sect2"><div class="titlepage"><div><div><h3 class="title"><a name="JsonConfig"></a>JSON Configuration</h3></div></div></div><p><span class="application">nrlsmf</span> supports loading and saving
       configuration in JSON format. Some advanced options (including GRE tunnel
       mapping) are not yet available via JSON and must be configured using
-      command-line or remote control commands.</p><div class="table"><a name="id2461"></a><p class="title"><b>Table 9. Configuration Commands</b></p><div class="table-contents"><table class="table" summary="Configuration Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">load &lt;configFile&gt;</code></td><td>Load an nrlsmf JSON configuration file at startup or at
+      command-line or remote control commands.</p><div class="table"><a name="id2480"></a><p class="title"><b>Table 9. Configuration Commands</b></p><div class="table-contents"><table class="table" summary="Configuration Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">load &lt;configFile&gt;</code></td><td>Load an nrlsmf JSON configuration file at startup or at
               run-time.</td></tr><tr><td><code class="literal">save &lt;configFile&gt;</code></td><td>Save the current configuration to a JSON file, typically
               upon exit.</td></tr><tr><td><code class="literal">stats</code></td><td>Return interface and group information via the remote
               control interface.</td></tr></tbody></table></div></div><br class="table-break"></div><p>The "Remote-only Commands" listed here can be invoked only via the
@@ -1213,7 +1233,7 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
     list. The "selectorMac" and "neighborMac" apply to control of S-MPR
     forwarding. The "mneBlockMac" command is provided to support proper SMF
     behavior in the <a class="ulink" href="http://cs.itd.nrl.navy.mil/products" target="_top">NRL
-    Mobile Network Emulation (MNE)</a> environment.</p><div class="table"><a name="id2485"></a><p class="title"><b>Table 10. Remote-only Commands</b></p><div class="table-contents"><table class="table" summary="Remote-only Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">selectorMac</code>
+    Mobile Network Emulation (MNE)</a> environment.</p><div class="table"><a name="id2504"></a><p class="title"><b>Table 10. Remote-only Commands</b></p><div class="table-contents"><table class="table" summary="Remote-only Commands" border="1"><colgroup><col class="Command"><col class="Description"></colgroup><tbody><tr><td><code class="literal">selectorMac</code>
             <br><code class="literal">&lt;binary macAddrArray&gt;</code></td><td>This command can be used by external processes (e.g.,
               <span class="application">nrlolsrd</span>) to control
               <span class="application">nrlsmf</span> S-MPR forwarding. This command
@@ -1306,7 +1326,87 @@ ip neigh add 172.16.0.5 lladdr 10.0.4.2 dev gre0 nud permanent</pre><p>On A, B, 
     "<code class="filename">\\.\mailslot\&lt;instanceName&gt;</code>" is created and
     used while on WinCE systems a semaphore is instantiated along with a
     corresponding registry entry mapping to a locally-bound UDP socket
-    provides equivalent functionality.</p></div><div class="sect1"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a name="id1343"></a>Current Limitations</h2></div></div></div><p>There are limitations in the use of some
+    provides equivalent functionality.</p><p>The same <span class="application">nrlsmf</span> binary can act as a
+    client against that socket. Invoke it as
+    "<code class="literal">nrlsmf --cli [-i &lt;instanceName&gt;] -c "show &lt;command&gt;
+    [modifiers]"</code>" to query runtime status. Repeat
+    <code class="literal">-c</code> to send more than one command (for example
+    "<code class="literal">nrlsmf --cli -c "show statistics" -c "show interface grouping"</code>").
+    Commands include
+    <code class="literal">version</code>, <code class="literal">statistics</code>,
+    <code class="literal">interface</code>, <code class="literal">interface grouping</code>
+    (a subcommand of <code class="literal">interface</code>),
+    <code class="literal">tunnel</code>, <code class="literal">tunnel neighbors</code>
+    (GRE/mGRE neighbors from configuration and/or the kernel),
+    <code class="literal">groups</code>, <code class="literal">groups memberships</code>,
+    and <code class="literal">igmp groups</code>. The last three require an Elastic
+    Multicast build. The unmodified command is the default listing.
+    Optional modifiers are command-specific. <code class="literal">brief</code> requests
+    less output and <code class="literal">details</code> requests more; a command may
+    support none, one, or both. When JSON is wanted, <code class="literal">json</code>
+    is always the last modifier (for example
+    "<code class="literal">show groups brief json</code>").
+    Older one-shot verbs such as <code class="literal">stats</code> and
+    <code class="literal">groupsj</code> still work for compatibility. Configuration
+    commands (for example "<code class="literal">nrlsmf --cli -c "debug 2"</code>",
+    "<code class="literal">with-frr</code>", or "<code class="literal">elastic overlay</code>")
+    are sent without waiting for a response. Use "<code class="literal">-i</code>" when
+    the target process was started with a non-default
+    <code class="literal">instance</code> name. Run "<code class="literal">nrlsmf --cli ?</code>"
+    for the show-command list.</p><p>On an Elastic build, <code class="literal">show interface</code> includes
+    flag <code class="literal">M</code> (JSON <code class="literal">Managed</code>) when
+    last-hop membership skip is in effect on that interface. The other
+    flags are <code class="literal">L</code> layered, <code class="literal">T</code> tunnel,
+    <code class="literal">I</code> IGMP proxy, and <code class="literal">S</code>
+    shadowing.</p><p><code class="literal">show groups</code> lists detected multicast flows.
+    The <code class="literal">fwd</code> column is the flow default (often
+    <code class="literal">L</code>, LIMIT, about 1 packet per second).
+    Per-interface FORWARD after an EM_ACK is not that column; use
+    <code class="literal">show groups details</code>.
+    <code class="literal">recv</code> is the lifetime packet count.
+    <code class="literal">pps</code> is over a tumbling window of about 5
+    seconds.</p><pre class="programlisting">nrlsmf --cli -i smf-r1 -c "show groups"
+Flags: A = Active, K = Ack
+Fwd: B = Block, H = Hybrid, L = Limit, F = Forward, D = Deny
+group            saddr            iif          flags fwd recv   pps
+---------------- ---------------- ------------ ----- --- ------ ----
+239.0.0.1        192.168.55.2     gre1         AK    L     41   8.8</pre><p><code class="literal">show groups details</code> nests inbound sources
+    and outbound interfaces. <code class="literal">Selected</code>
+    <code class="literal">Y</code> is the current upstream.
+    <code class="literal">Why</code> is <code class="literal">managed</code> (IGMP or static
+    last hop), <code class="literal">ack</code> (EM_ACK from a downstream relay),
+    or <code class="literal">-</code>.</p><pre class="programlisting">nrlsmf --cli -i smf-r1 -c "show groups details"
+Flags: A = Active, K = Ack
+Selected: Y = current upstream, N = additional inbound
+Fwd: B = Block, H = Hybrid, L = Limit, F = Forward, D = Deny
+Why: managed = IGMP/static last hop, ack = EM_ACK, - = default
+
+group            saddr            flags ack recv   pps
+---------------- ---------------- ----- --- ------ ----
+239.0.0.1        192.168.55.2     AK    yes 41     8.8
+  sources
+    iif          upstream         sel
+    gre1         10.0.0.2         Y
+  downstream
+    oif          mode     why      fwd sent   pps  relays
+    eth1         elastic  managed  F     41   8.8  -
+    gre1         elastic  ack      F      0   0.0  -</pre><p><code class="literal">show groups memberships</code> is the controller
+    table: <code class="literal">S</code> static (<code class="literal">join</code>),
+    <code class="literal">M</code> managed (IGMP via <code class="literal">with-frr</code>),
+    <code class="literal">E</code> elastic (downstream EM_ACK). This is not the
+    last-hop skip list.</p><pre class="programlisting">nrlsmf --cli -i smf-r1 -c "show groups memberships"
+Flags: S = Static, M = Managed, E = Elastic
+group            saddr            iface        flags relays
+---------------- ---------------- ------------ ----- ----------------
+239.0.0.1        *                eth1         M     -
+239.0.0.1        192.168.55.2     gre1         E     10.0.0.2</pre><p><code class="literal">show igmp groups</code> is the last-hop list
+    filled by <code class="literal">with-frr</code>. A managed host interface that
+    does not list the group is not used as a last hop.</p><pre class="programlisting">nrlsmf --cli -i smf-r1 -c "show igmp groups"
+Flags: M = Managed (last-hop HasActiveMembership)
+iface         flags groups
+------------  ----- ------
+eth1          M     239.0.0.1
+gre1          -     -</pre></div><div class="sect1"><div class="titlepage"><div><div><h2 class="title" style="clear: both"><a name="id1343"></a>Current Limitations</h2></div></div></div><p>There are limitations in the use of some
     <span class="application">nrlsmf</span> options. Many of these limitations are a
     result of <span class="application">nrlsmf</span> being a cross-platform,
     user-space implementation. Many of these subtleties could be overcome with
