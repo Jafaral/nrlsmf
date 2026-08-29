@@ -36,7 +36,7 @@ still one of the operator's own four routers, just doing double duty.
 | File | Mode | What resolves "which peer?" |
 |------|------|------------------------------|
 | `mutest_gre_p2p.py` | Point-to-point GRE (two independent pairs: r0<->r1, r2<->r3) | N/A — each tunnel has exactly one fixed peer |
-| `mutest_mgre_static.py` | Multipoint GRE, static NBMA | Kernel `ip neigh` for overlay unicast; nrlsmf `map <gre>,<local>,dynamic` learns those dests for overlay multicast inject |
+| `mutest_mgre_static.py` | Multipoint GRE, static NBMA | Kernel `ip neigh` for overlay unicast; nrlsmf `map <gre>,<local>,dynamic` learns those dests for overlay multicast inject. Ends with runtime `with-frr` + `elastic overlay` on the same `eth1,gre1` group (keep h1, stop h2/h3; idle hosts at most 1 pps). |
 | `mutest_mgre_nhrp.py` | Multipoint GRE, NHRP-resolved | FRR `nhrpd` programs kernel `ip neigh` (hub/NHS on `r3`, never `u0`); nrlsmf `map …,dynamic` learns those dests. Spokes are layered; the hub is not (overlay-mcast replicator). |
 | `mutest_mgre_mcast.py` | Multipoint GRE, multicast underlay remote | Nothing — underlay multicast fan-out delivers to every peer from one transmission |
 | `mutest_gre_external.py` | "External" (metadata) GRE | Per-destination lwtunnel routes for overlay unicast; nrlsmf overlay-multicast inject uses explicit `map <gre>,<local>,<peer>` (`dynamic` does not apply — no `ip neigh`). Skipped on Linux < 5.0. |

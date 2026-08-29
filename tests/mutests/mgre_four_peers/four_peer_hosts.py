@@ -5,6 +5,8 @@ Each router has an application host off eth1. Iperf is sourced on h0
 the first hop onto the overlay and the last hop off it.
 """
 
+import time
+
 HOST_IFACE = "eth0"
 ROUTER_HOST_IFACE = "eth1"
 IPERF_TTL = "16"
@@ -71,6 +73,17 @@ def start_overlay_mcast_servers(step, receivers, mcast, gre_dev=None):
         )
 
 
+def restart_overlay_mcast_servers(step, receivers, mcast):
+    """New iperf server log. Do not truncate a live iperf file: the
+    writer keeps its old offset (sparse NULs) and grep then treats the
+    log as binary and never prints ``8 pps``.
+    """
+    for name in receivers:
+        step(name, "pkill iperf || true")
+    time.sleep(1)
+    start_overlay_mcast_servers(step, receivers, mcast)
+
+
 def start_host_mcast_client(step, wait_step, mcast):
     step(SOURCE_HOST, f"ip route replace {mcast}/32 dev {HOST_IFACE}")
     step(
@@ -98,7 +111,54 @@ def wait_overlay_mcast_receivers(wait_step, receivers):
         )
 
 
+def count_overlay_mcast_pkts(step, node, mcast, iface=HOST_IFACE, window_s=2):
+    """Count packets to ``mcast`` on ``iface`` over ``window_s`` seconds."""
+    raw = step(
+        node,
+        f"timeout {window_s} tcpdump -nn -l -i {iface} host {mcast} 2>/dev/null "
+        f"| grep -c {mcast} || true",
+    )
+    n = 0
+    for tok in str(raw).split():
+        if tok.isdigit():
+            n = int(tok)
+    return n
+
+
 def cleanup_iperf(step, receivers):
     step(SOURCE_HOST, "pkill iperf || true")
     for name in receivers:
         step(name, "pkill iperf || true")
+
+
+def enable_host_igmp(step, wait_step, routers, host_iface=ROUTER_HOST_IFACE):
+    """Enable IGMP on each router's host LAN.
+
+    FRR serves IGMP from pimd, so that daemon must be running for
+    ``show ip igmp`` / nrlsmf ``with-frr``. No ``ip pim`` on the iface.
+    """
+    for name in routers:
+        step(name, "pgrep -x pimd >/dev/null || /usr/lib/frr/pimd -d")
+        step(
+            name,
+            "vtysh -c 'configure terminal' "
+            f"-c 'interface {host_iface}' "
+            "-c 'ip igmp'",
+        )
+        wait_step(
+            name,
+            f"vtysh -c 'show ip igmp interface {host_iface}'",
+            match=host_iface,
+            desc=f"{name} FRR IGMP enabled on {host_iface}",
+            timeout=20,
+        )
+
+
+def wait_igmp_group(wait_step, router, mcast, timeout=30):
+    wait_step(
+        router,
+        "vtysh -c 'show ip igmp groups'",
+        match=mcast,
+        desc=f"{router} FRR IGMP has {mcast}",
+        timeout=timeout,
+    )

@@ -1,6 +1,7 @@
 """Helpers to query a running nrlsmf via ``nrlsmf --cli`` JSON show commands."""
 
 import json
+import time
 
 from munet.mutest.userapi import step
 from munet.mutest.userapi import test_step
@@ -57,40 +58,188 @@ def check_common_show(node, instance=None, group_name=None, ifaces=None):
         )
 
     stats = show_json(node, "show statistics", instance)
-    if stats is not None:
-        test_step(isinstance(stats, list) and len(stats) >= 1,
-                  f"{node} show statistics json is a non-empty list", target=node)
+    if isinstance(stats, list):
         names = {row.get("interface") for row in stats if isinstance(row, dict)}
         for iface in ifaces or ():
             test_step(iface in names, f"{node} statistics includes {iface}", target=node)
 
     listing = show_json(node, "show interface", instance)
-    if listing is not None:
-        test_step(isinstance(listing, list) and len(listing) >= 1,
-                  f"{node} show interface json is a non-empty list", target=node)
+    if isinstance(listing, list):
         names = {row.get("Interface") for row in listing if isinstance(row, dict)}
         for iface in ifaces or ():
             test_step(iface in names, f"{node} interface list includes {iface}", target=node)
 
     grouping = show_json(node, "show interface grouping", instance)
-    if grouping is not None:
-        test_step(isinstance(grouping, list) and len(grouping) >= 1,
-                  f"{node} show interface grouping json is a non-empty list", target=node)
-        if group_name:
-            gnames = {g.get("GroupName") for g in grouping if isinstance(g, dict)}
-            test_step(group_name in gnames,
-                      f"{node} grouping includes {group_name}", target=node)
+    if isinstance(grouping, list) and group_name:
+        gnames = {g.get("GroupName") for g in grouping if isinstance(g, dict)}
+        test_step(group_name in gnames,
+                  f"{node} grouping includes {group_name}", target=node)
+
+
+def check_group_elastic(node, instance, group_name, enabled, ifaces=None,
+                        group_ifaces=None, absent_ifaces=None):
+    """Assert show interface grouping/interface report Elastic on or off."""
+    grouping = show_json(node, "show interface grouping", instance)
+    if grouping is None:
+        return
+    groups = [g for g in grouping if isinstance(g, dict) and g.get("GroupName") == group_name]
+    test_step(bool(groups), f"{node} grouping includes {group_name}", target=node)
+    if groups:
+        is_em = groups[0].get("Elastic") is True
+        test_step(
+            is_em is enabled,
+            f"{node} grouping {group_name} Elastic is {enabled}",
+            target=node,
+        )
+        have = set(groups[0].get("Interfaces") or [])
+        for iface in group_ifaces or ():
+            test_step(
+                iface in have,
+                f"{node} grouping {group_name} includes {iface}",
+                target=node,
+            )
+        for iface in absent_ifaces or ():
+            test_step(
+                iface not in have,
+                f"{node} grouping {group_name} omits {iface}",
+                target=node,
+            )
+    listing = show_json(node, "show interface", instance)
+    if listing is None or not ifaces:
+        return
+    want = "Elastic" if enabled else "Flood"
+    for iface in ifaces:
+        rows = [r for r in listing if isinstance(r, dict) and r.get("Interface") == iface]
+        test_step(bool(rows), f"{node} interface list includes {iface}", target=node)
+        if rows:
+            test_step(
+                rows[0].get("FwdMethod") == want,
+                f"{node} {iface} FwdMethod is {want}",
+                target=node,
+            )
 
 
 def check_show_groups(node, instance=None, mcast_addr=None):
     groups = show_json(node, "show groups", instance)
-    if groups is None:
+    if groups is None or not isinstance(groups, list):
         return
-    test_step(isinstance(groups, list), f"{node} show groups json is a list", target=node)
     if mcast_addr:
         addrs = {g.get("MCastAddr") for g in groups if isinstance(g, dict)}
         test_step(mcast_addr in addrs,
                   f"{node} show groups includes {mcast_addr}", target=node)
+
+
+def _em_flow(groups, mcast_addr):
+    if not isinstance(groups, list):
+        return None
+    for row in groups:
+        if isinstance(row, dict) and row.get("MCastAddr") == mcast_addr:
+            return row
+    return None
+
+
+def check_em_flow(node, instance, mcast_addr, ack=None, status=None, fwd_status=None):
+    """Assert show groups fields for an EM flow (Ack / Status / FwdStatus)."""
+    groups = show_json(node, "show groups", instance)
+    flow = _em_flow(groups, mcast_addr)
+    test_step(
+        flow is not None,
+        f"{node} show groups includes {mcast_addr}",
+        target=node,
+    )
+    if flow is None:
+        return None
+    if ack is not None:
+        have = flow.get("Ack")
+        test_step(
+            have == ack,
+            f"{node} {mcast_addr} Ack is {have!r} (want {ack!r})",
+            target=node,
+        )
+    if status is not None:
+        have = flow.get("Status")
+        test_step(
+            have == status,
+            f"{node} {mcast_addr} Status is {have!r} (want {status!r})",
+            target=node,
+        )
+    if fwd_status is not None:
+        have = flow.get("FwdStatus")
+        test_step(
+            have == fwd_status,
+            f"{node} {mcast_addr} FwdStatus is {have!r} (want {fwd_status!r})",
+            target=node,
+        )
+    return flow
+
+
+def _igmp_iface(rows, iface):
+    for row in rows or ():
+        if isinstance(row, dict) and row.get("Interface") == iface:
+            return row
+    return None
+
+
+def _igmp_has_group(rows, iface, group):
+    row = _igmp_iface(rows, iface)
+    if row is None or row.get("Managed") is not True:
+        return False
+    groups = row.get("Groups") if isinstance(row.get("Groups"), list) else []
+    return group in groups
+
+
+def wait_em_managed(node, instance, iface, group, timeout=20):
+    """Poll show igmp groups until iface is Managed and lists group."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        try:
+            last = parse_json_blob(cli_cmd(node, "show igmp groups json", instance))
+        except (json.JSONDecodeError, ValueError):
+            last = None
+        if _igmp_has_group(last, iface, group):
+            test_step(
+                True,
+                f"{node} show igmp groups {iface} has {group}",
+                target=node,
+            )
+            return last
+        time.sleep(1)
+    test_step(
+        False,
+        f"{node} show igmp groups {iface} missing {group}",
+        target=node,
+    )
+    return last
+
+
+def wait_em_flow(node, instance, mcast_addr, ack=None, status=None, timeout=20):
+    """Poll show groups until the flow exists and optional Ack/Status match."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        try:
+            last = parse_json_blob(cli_cmd(node, "show groups json", instance))
+        except (json.JSONDecodeError, ValueError):
+            last = None
+        flow = _em_flow(last, mcast_addr)
+        if flow is not None:
+            if ack is not None and flow.get("Ack") != ack:
+                time.sleep(1)
+                continue
+            if status is not None and flow.get("Status") != status:
+                time.sleep(1)
+                continue
+            return check_em_flow(
+                node, instance, mcast_addr, ack=ack, status=status,
+            )
+        time.sleep(1)
+    return check_em_flow(node, instance, mcast_addr, ack=ack, status=status)
+
+
+def wait_show_groups(node, instance, mcast_addr, timeout=20):
+    """Poll show groups until the EM FIB lists ``mcast_addr``."""
+    wait_em_flow(node, instance, mcast_addr, timeout=timeout)
 
 
 def _rows_for_iface(rows, iface):

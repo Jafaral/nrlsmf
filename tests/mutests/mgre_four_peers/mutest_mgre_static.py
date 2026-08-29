@@ -2,11 +2,12 @@
 
 Topology (shared with other tests in this directory):
 
-         h0 -- r0 -- lan0 --\\
-              r1 -- lan1 ---\\
-                             u0   (underlay: routes ordinary IP between the LANs)
-              r2 -- lan2 ---/
-              r3 -- lan3 --/
+                              +-------+
+        h0 -- r0 -- lan0 -----+       |
+        h1 -- r1 -- lan1 -----+  u0   |  (underlay: routes ordinary IP between the LANs)
+        h2 -- r2 -- lan2 -----+       |
+        h3 -- r3 -- lan3 -----+       |
+                              +-------+
 
 What "static NBMA mGRE" means here
 ------------------------------------
@@ -43,6 +44,11 @@ What this example covers
 * nrlsmf classic flooding (`cf`) on each router's host LAN plus gre1.
   Iperf is sourced on h0 and received on h1/h2/h3.
 
+After the cf overlay-mcast passes, the same nrlsmf processes get
+runtime ``with-frr`` and ``elastic overlay`` (maps and grouping stay).
+Keep h1 receiving, stop h2/h3, and expect at most 1 pps on the
+stopped hosts.
+
 See mutest_gre_p2p.py (point-to-point), mutest_mgre_nhrp.py (NHRP-
 resolved mGRE), mutest_mgre_mcast.py (multicast-underlay mGRE), and
 mutest_gre_external.py (external/metadata GRE, resolved via routes
@@ -56,18 +62,29 @@ from munet.mutest.userapi import test_step
 from munet.mutest.userapi import wait_step
 
 import sys
+import time
 
 sys.path.insert(0, str(script_dir()))
 sys.path.insert(0, str(script_dir().parent))
 from four_peer_hosts import RECV_HOSTS
+from four_peer_hosts import ROUTER_HOST_IFACE
+from four_peer_hosts import SOURCE_HOST
 from four_peer_hosts import cleanup_iperf
+from four_peer_hosts import count_overlay_mcast_pkts
+from four_peer_hosts import enable_host_igmp
+from four_peer_hosts import restart_overlay_mcast_servers
 from four_peer_hosts import setup_host_lan
 from four_peer_hosts import start_host_mcast_client
 from four_peer_hosts import start_overlay_mcast_servers
+from four_peer_hosts import wait_igmp_group
 from four_peer_hosts import wait_overlay_mcast_receivers
 from smf_cli import check_common_show
+from smf_cli import check_group_elastic
 from smf_cli import check_show_neighbors
 from smf_cli import check_show_tunnel
+from smf_cli import cli_cmd
+from smf_cli import wait_em_flow
+from smf_cli import wait_em_managed
 
 # Underlay LAN addressing (matches */etc.frr/frr.conf)
 ROUTERS = {
@@ -294,6 +311,71 @@ check_show_neighbors(
 start_overlay_mcast_servers(step, RECEIVERS, OVERLAY_MCAST)
 start_host_mcast_client(step, wait_step, OVERLAY_MCAST)
 wait_overlay_mcast_receivers(wait_step, RECEIVERS)
+
+KEEP_RECV = ("h1",)
+IDLE_RECV = ("h2", "h3")
+EM_WINDOW_S = 2.0
+EM_IDLE_MAX_PPS = 1
+
+
+section("[Static] Host IGMP on eth1; h0 joins 239.0.0.1")
+
+# h0 is the sender; join 239.0.0.1 the same way h1/h2/h3 do so r0
+# eth1 is an IGMP host LAN and with-frr sees a local member.
+start_overlay_mcast_servers(step, (SOURCE_HOST,), OVERLAY_MCAST)
+enable_host_igmp(step, wait_step, ROUTERS)
+for name in ROUTERS:
+    wait_igmp_group(wait_step, name, OVERLAY_MCAST)
+
+section("[Static] Runtime with-frr + elastic overlay")
+
+# Same running CF processes. Maps, layered gre1, and overlay grouping
+# stay. with-frr starts FRR IGMP polling; elastic overlay turns on EM.
+for name in ROUTERS:
+    inst = f"smf-{name}"
+    cli_cmd(name, "with-frr", inst)
+    cli_cmd(name, "elastic overlay", inst)
+    check_group_elastic(
+        name, inst, "overlay", enabled=True,
+        ifaces=(ROUTER_HOST_IFACE, GRE_DEV),
+    )
+
+section("[Static] EM ack/forwarding state")
+
+# r1 has a local IGMP member (h1): it must ACK upstream so r0 FORWARDs
+# on gre1. Default FwdStatus is usually LIMIT; oif is the per-iface
+# token-bucket status after EM_ACK (show groups details).
+wait_em_flow("r1", "smf-r1", OVERLAY_MCAST, ack="yes", status="ACTIVE", timeout=20)
+wait_em_flow("r0", "smf-r0", OVERLAY_MCAST, ack="yes", timeout=20)
+wait_em_managed("r1", "smf-r1", ROUTER_HOST_IFACE, OVERLAY_MCAST, timeout=20)
+
+section("[Static] Overlay mcast after elastic")
+# New h1 iperf log so grep cannot match CF-era lines.
+restart_overlay_mcast_servers(step, KEEP_RECV, OVERLAY_MCAST)
+wait_overlay_mcast_receivers(wait_step, KEEP_RECV)
+
+section("[Static] Stop h2/h3; keep h1")
+
+for name in IDLE_RECV:
+    step(name, "pkill iperf || true")
+
+time.sleep(6)
+wait_step(
+    "h1",
+    "tail -n1 iperf-h1-server.log",
+    match="8 pps",
+    desc="h1 still receiving application multicast at 8 pps after elastic",
+    timeout=30,
+)
+
+for name in IDLE_RECV:
+    n = count_overlay_mcast_pkts(step, name, OVERLAY_MCAST, window_s=EM_WINDOW_S)
+    pps = n / EM_WINDOW_S
+    test_step(
+        pps <= EM_IDLE_MAX_PPS,
+        f"{name} non-receiver overlay mcast {pps:.1f} pps (at most {EM_IDLE_MAX_PPS})",
+        target=name,
+    )
 
 section("Cleanup")
 
