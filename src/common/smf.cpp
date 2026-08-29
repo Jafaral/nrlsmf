@@ -2847,6 +2847,27 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             }
         }
         mcast_fib.InsertEntry(*fibEntry);
+        // IGMP/static memberships are (*,G). Seed last-hop FORWARD on
+        // this new (S,G) so the first packet is not stuck at LIMIT.
+        if (NULL != mcast_controller)
+        {
+            ProtoAddress dstIp;
+            flowDescription.GetDstAddr(dstIp);
+            ProtoFlow::Description dstOnly(dstIp);
+            MulticastFIB::MembershipTable::Iterator memIt(
+                mcast_controller->AccessMembershipTable(), &dstOnly,
+                ProtoFlow::Description::FLAG_DST);
+            MulticastFIB::Membership* membership;
+            while (NULL != (membership = memIt.GetNextEntry()))
+            {
+                if (membership->FlagIsSet(MulticastFIB::Membership::MANAGED) ||
+                    membership->FlagIsSet(MulticastFIB::Membership::STATIC))
+                {
+                    fibEntry->SetForwardingStatus(membership->GetInterfaceIndex(),
+                                                  MulticastFIB::FORWARD, true);
+                }
+            }
+        }
         // Put the new, dynamically detected flow in our "active_list"
         mcast_fib.ActivateFlow(*fibEntry, currentTick);
         updateController = true;
