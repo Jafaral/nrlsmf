@@ -2074,6 +2074,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     // If there is an ElasticMcast interface group, this will
     // be looked up (or created as needed for new flows)
     MulticastFIB::Entry* fibEntry = NULL;
+    bool recvNoted = false;
+    MulticastFIB::TokenBucket* bucket = NULL;
 
 #endif  // ELASTIC_MCAST
 
@@ -2377,6 +2379,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #endif // ADAPTIVE_ROUTING
 
 #ifdef ELASTIC_MCAST
+        bucket = NULL;
         if (!dstIp.IsMulticast() && IsOwnAddress(dstIp))
         {
             // Don't forward unicast packets destined to self
@@ -2412,8 +2415,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     }
                 }
             }  // end if (NULL == fibEntry)
+            if (!recvNoted && dstIp.IsMulticast() &&
+                !dstIp.HostIsEqual(ElasticAck::ELASTIC_ADDR))
+            {
+                fibEntry->NoteRecv(currentTick);
+                recvNoted = true;
+            }
             // Get (or create if needed) the token bucket for this outbound iface
-            MulticastFIB::TokenBucket* bucket = fibEntry->GetBucket(dstIface.GetIndex());
+            bucket = fibEntry->GetBucket(dstIface.GetIndex());
             if (NULL != bucket)
             {
                 // Check if the flow passes the bucket's rate limit test
@@ -2442,8 +2451,10 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             if (((ttl > 1) || is_tunnel || outbound) && ((unsigned int)dstCount < dstIfArraySize))
             {
                 dstIfArray[dstCount++] = dstIface.GetIndex();
-
-
+#ifdef ELASTIC_MCAST
+                if (NULL != bucket)
+                    bucket->NoteSent(currentTick);
+#endif // ELASTIC_MCAST
             }
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): Preparing to forward! DstCount = %d \n", dstCount );
         }
