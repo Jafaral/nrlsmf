@@ -663,6 +663,8 @@ class Smf
                     {managed_memberships.Remove(grpAddr);}
                 bool HasActiveMembership(const ProtoAddress& grpAddr) const
                     {return managed_memberships.Contains(grpAddr);}
+                ProtoAddressList& AccessManagedMemberships()
+                    {return managed_memberships;}
 #endif // ELASTIC_MCAST
 
                 // This is for adding an opaque "decorator" extension to the interface

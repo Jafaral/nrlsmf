@@ -2705,6 +2705,64 @@ void ElasticMulticastForwarder::DumpGroups(bool brief, bool useJson, std::ostrin
     else mcast_fib.DumpFlowList(brief, ss, details, now);
 }
 
+void ElasticMulticastForwarder::DumpManagedGroups(bool useJson, std::ostringstream& ss)
+{
+    Smf& smf = *reinterpret_cast<Smf*>(this);
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* iface;
+    bool comma = false;
+    if (useJson)
+        ss << "[";
+    else
+    {
+        ss << "Flags: M = Managed (last-hop HasActiveMembership)\n"
+           << "iface         flags groups\n"
+           << "------------  ----- ------\n";
+    }
+    while (NULL != (iface = iterator.GetNextItem()))
+    {
+        if (useJson)
+        {
+            ss << (comma ? "," : "")
+               << "{\"Interface\" : \"" << iface->GetNameStr()
+               << "\", \"Managed\" : " << (iface->IsManaged() ? "true" : "false")
+               << ", \"Groups\" : [";
+            ProtoAddressList::Iterator git(iface->AccessManagedMemberships());
+            ProtoAddress grp;
+            bool gcomma = false;
+            while (git.GetNextAddress(grp))
+            {
+                char host[64];
+                grp.GetHostString(host, sizeof(host) - 1);
+                ss << (gcomma ? "," : "") << "\"" << host << "\"";
+                gcomma = true;
+            }
+            ss << "]}";
+        }
+        else
+        {
+            ss << std::left << std::setw(14) << iface->GetNameStr()
+               << (iface->IsManaged() ? "M     " : "-     ");
+            ProtoAddressList::Iterator git(iface->AccessManagedMemberships());
+            ProtoAddress grp;
+            bool gcomma = false;
+            while (git.GetNextAddress(grp))
+            {
+                char host[64];
+                grp.GetHostString(host, sizeof(host) - 1);
+                ss << (gcomma ? "," : "") << host;
+                gcomma = true;
+            }
+            if (!gcomma)
+                ss << "-";
+            ss << "\n";
+        }
+        comma = true;
+    }
+    if (useJson)
+        ss << "]\n";
+}
+
 ///////////////////////////////////////////////////////////////////////////////////
 // class ElasticMulticastController implementation
 //
@@ -3548,6 +3606,11 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
 void ElasticMulticastController::DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details)
 {
     mcast_forwarder->DumpGroups(brief, useJson, ss, details);
+}
+
+void ElasticMulticastController::DumpManagedGroups(bool useJson, std::ostringstream& ss)
+{
+    mcast_forwarder->DumpManagedGroups(useJson, ss);
 }
 
 void ElasticMulticastController::DumpMemberships(bool useJson, std::ostringstream& ss)

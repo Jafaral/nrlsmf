@@ -117,6 +117,7 @@ class SmfApp : public ProtoApp
 #ifdef ELASTIC_MCAST
         void ReplyGroups(bool json, bool brief, bool details = false);
         void ReplyGroupMemberships(bool json);
+        void ReplyIgmpGroups(bool json);
 #endif // ELASTIC_MCAST
 
         bool LoadConfig(const char* configPath);
@@ -1298,8 +1299,9 @@ static const struct ShowTopicSpec
     { "interface",   "grouping",   "SMF interface groups",               true, false, false, false },
     { "tunnel",      NULL,         "tunnel endpoint mappings",           true, false, false, false },
     { "tunnel",      "neighbors",  "GRE/mGRE neighbors",                 true, false, false, false },
-    { "groups",      NULL,           "elastic multicast groups",           true, true,  true,  true  },
+    { "groups",      NULL,           "elastic multicast flows",            true, true,  true,  true  },
     { "groups",      "memberships",  "EM memberships and downstream relays", true, false, false, true },
+    { "igmp",        "groups",       "IGMP last-hop groups (with-frr)",    true, false, false, true },
     { NULL, NULL, NULL, false, false, false, false }
 };
 
@@ -1374,6 +1376,7 @@ static void FormatShowHelp(std::ostringstream& ss)
        << "  nrlsmf --cli -c \"show groups brief json\"\n"
        << "  nrlsmf --cli -c \"show groups details json\"\n"
        << "  nrlsmf --cli -c \"show groups memberships json\"\n"
+       << "  nrlsmf --cli -c \"show igmp groups json\"\n"
        << "  nrlsmf --cli -i smf-p4 -c \"show interface json\"\n"
        << "\n"
        << "Configuration commands (debug, add, relay, map, ...) use the same\n"
@@ -6557,14 +6560,25 @@ void SmfApp::ReplyInterfaces(bool json)
             if (nextIface->IsIgmpProxy()) ss << "I";
             InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
             if ((NULL != mech) && mech->IsShadowing()) ss << "S";
-            ss << "\"}";
+#ifdef ELASTIC_MCAST
+            if (nextIface->IsManaged()) ss << "M";
+#endif // ELASTIC_MCAST
+            ss << "\"";
+#ifdef ELASTIC_MCAST
+            ss << ", \"Managed\" : " << (nextIface->IsManaged() ? "true" : "false");
+#endif // ELASTIC_MCAST
+            ss << "}";
             comma = true;
         }
         ss << "]\n";
     }
     else
     {
-        ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing\n\n";
+        ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing";
+#ifdef ELASTIC_MCAST
+        ss << ", M = Managed";
+#endif // ELASTIC_MCAST
+        ss << "\n\n";
         ss << "Interface        Fwd Method Flags\n";
         ss << "---------------- ---------- -----\n";
         while (NULL != (nextIface = iterator.GetNextItem()))
@@ -6581,12 +6595,14 @@ void SmfApp::ReplyInterfaces(bool json)
 #else
             ss << "Flood";
 #endif // ELASTIC_MCAST
-            std::setw(1);
             if (nextIface->IsLayered()) ss << "L";
             if (nextIface->IsTunnel()) ss << "T";
             if (nextIface->IsIgmpProxy()) ss << "I";
             InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
             if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+#ifdef ELASTIC_MCAST
+            if (nextIface->IsManaged()) ss << "M";
+#endif // ELASTIC_MCAST
             ss << "\n";
         }
     }
@@ -6878,6 +6894,13 @@ void SmfApp::ReplyGroupMemberships(bool json)
     mcast_controller.DumpMemberships(json, ss);
     ControlReply(ss.str());
 }
+
+void SmfApp::ReplyIgmpGroups(bool json)
+{
+    std::ostringstream ss;
+    mcast_controller.DumpManagedGroups(json, ss);
+    ControlReply(ss.str());
+}
 #endif // ELASTIC_MCAST
 
 void SmfApp::OnShowCommand(const char* arg)
@@ -7001,6 +7024,14 @@ void SmfApp::OnShowCommand(const char* arg)
         ReplyGroupMemberships(json);
 #else
         ControlReply(std::string("show groups memberships is only available in elastic builds\n"));
+#endif // ELASTIC_MCAST
+    }
+    else if ((0 == strcmp(topic, "igmp")) && (NULL != sub) && (0 == strcmp(sub, "groups")))
+    {
+#ifdef ELASTIC_MCAST
+        ReplyIgmpGroups(json);
+#else
+        ControlReply(std::string("show igmp groups is only available in elastic builds\n"));
 #endif // ELASTIC_MCAST
     }
     else if (0 == strcmp(topic, "groups"))
