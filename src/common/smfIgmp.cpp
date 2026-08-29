@@ -37,13 +37,7 @@ bool SmfIgmp::Open(bool withFRR)
     wpipe = p[1]; // For writing IGMP updates locally
 
     if (withFRR)
-    { // Using FRR, so active the timer to check FRR
-        DoUpdate(update_timer);
-        if (!update_timer.IsActive())
-        {
-            timer_mgr.ActivateTimer(update_timer);
-        }
-    }
+        EnableFrrPolling();
     else if (update_timer.IsActive())
     { // Not using FRR, so make sure the timer is inactive
         update_timer.Deactivate();
@@ -57,6 +51,13 @@ bool SmfIgmp::Open(bool withFRR)
         return false;
     }
     return true;
+}
+
+void SmfIgmp::EnableFrrPolling()
+{
+    DoUpdate(update_timer);
+    if (!update_timer.IsActive())
+        timer_mgr.ActivateTimer(update_timer);
 }
 
 void SmfIgmp::Close()

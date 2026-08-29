@@ -38,6 +38,9 @@ class SmfIgmp : public ProtoChannel
         virtual bool Open(bool withFRR);
         virtual void Close();
         virtual bool IsOpen() const;
+        // Start (or resume) polling FRR PIM for IGMP ifaces/groups.
+        // Safe after Open(false) so "with-frr" can be sent at runtime.
+        void EnableFrrPolling();
 
         void ProcessUpdates();
         bool HasMembershipUpdates() const 

@@ -84,6 +84,8 @@ class SmfApp : public ProtoApp
 
         // This is used by ElasticMulticastForwarder to send EM_ACKs, etc
         bool SendFrame(unsigned int ifaceIndex, char* buffer, unsigned int length);
+        bool SendFrameTo(unsigned int ifaceIndex, char* buffer, unsigned int length,
+                         const ProtoAddress& dest);
 
     private:
         void MonitorEventHandler(ProtoChannel&               theChannel,
@@ -113,7 +115,8 @@ class SmfApp : public ProtoApp
         void ReplyTunnel(bool json);
         void ReplyTunnelNeighbors(bool json);
 #ifdef ELASTIC_MCAST
-        void ReplyGroups(bool json, bool brief);
+        void ReplyGroups(bool json, bool brief, bool details = false);
+        void ReplyGroupMemberships(bool json);
 #endif // ELASTIC_MCAST
 
         bool LoadConfig(const char* configPath);
@@ -318,6 +321,8 @@ class SmfApp : public ProtoApp
                 enum TxStatus {TX_OK, TX_BLOCK,TX_ERROR};
                 TxStatus SendFrame(char* frame, unsigned int frameLen);
                 bool SendGrePayload(ProtoCap& cap, char* frame, unsigned int frameLength, unsigned int& numBytes);
+                bool SendGreToRemote(ProtoCap& cap, char* frame, unsigned int frameLength,
+                                     const ProtoAddress& dest, unsigned int& numBytes);
 
 
                 void ResetTxIterator() {tx_iterator.Reset();}
@@ -730,6 +735,23 @@ bool SmfApp::InterfaceMechanism::SendGrePayload(ProtoCap& cap, char* frame, unsi
     numBytes = success ? sentBytes : 0;
     return success;
 }  // end SmfApp::InterfaceMechanism::SendGrePayload()
+
+bool SmfApp::InterfaceMechanism::SendGreToRemote(ProtoCap& cap, char* frame, unsigned int frameLength,
+                                                 const ProtoAddress& dest, unsigned int& numBytes)
+{
+    // One GRE outer dest (EM_ACK to a specific mGRE neighbor).
+    numBytes = frameLength - 14;
+    char* payload = frame + 14;
+    ProtoAddress saved = cap.GetTunnelRemoteAddr();
+    cap.SetTunnelRemoteAddr(dest);
+    unsigned int n = numBytes;
+    bool ok = cap.Send(payload, n);
+    cap.SetTunnelRemoteAddr(saved);
+    if (0 == n)
+        ok = false;
+    numBytes = ok ? n : 0;
+    return ok;
+}  // end SmfApp::InterfaceMechanism::SendGreToRemote()
 
 SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char* frame, unsigned int frameLength)
 {
@@ -1276,7 +1298,8 @@ static const struct ShowTopicSpec
     { "interface",   "grouping",   "SMF interface groups",               true, false, false, false },
     { "tunnel",      NULL,         "tunnel endpoint mappings",           true, false, false, false },
     { "tunnel",      "neighbors",  "GRE/mGRE neighbors",                 true, false, false, false },
-    { "groups",      NULL,         "elastic multicast groups",           true, true,  false, true  },
+    { "groups",      NULL,           "elastic multicast groups",           true, true,  true,  true  },
+    { "groups",      "memberships",  "EM memberships and downstream relays", true, false, false, true },
     { NULL, NULL, NULL, false, false, false, false }
 };
 
@@ -1349,6 +1372,8 @@ static void FormatShowHelp(std::ostringstream& ss)
        << "  nrlsmf --cli -c \"show tunnel neighbors\"\n"
        << "  nrlsmf --cli -c \"show groups brief\"\n"
        << "  nrlsmf --cli -c \"show groups brief json\"\n"
+       << "  nrlsmf --cli -c \"show groups details json\"\n"
+       << "  nrlsmf --cli -c \"show groups memberships json\"\n"
        << "  nrlsmf --cli -i smf-p4 -c \"show interface json\"\n"
        << "\n"
        << "Configuration commands (debug, add, relay, map, ...) use the same\n"
@@ -2125,6 +2150,13 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         PLOG(PL_DEBUG,"Setup to pull VRF data from FRR\n");
         smf.SetWithFRR(true);
+#ifdef ELASTIC_MCAST
+        // Command-line with-frr runs before OnStartup() opens the
+        // controller. A runtime --cli "with-frr" must start FRR polling
+        // on the already-open controller.
+        if (igmp_controller.IsOpen())
+            igmp_controller.EnableFrrPolling();
+#endif // ELASTIC_MCAST
         return true;
     }
     else if (!strncmp("ipv6", cmd, len))
@@ -2464,6 +2496,23 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to retrieve interface name\n");
                 return false;
+            }
+            // mGRE PF_PACKET does not deliver 224.0.0.55 unless the
+            // tunnel joins it. EM_ACK/ADV/NACK all use that group.
+            if (iface->IsGRE())
+            {
+                if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to open socket to join %s on %s\n",
+                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+                    return false;
+                }
+                if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: join %s on %s failed\n",
+                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+                    return false;
+                }
             }
             ProtoAddressList groupList;
             if (!ProtoNet::GetGroupMemberships(ifaceName, ProtoAddress::IPv4, groupList))
@@ -6816,10 +6865,17 @@ void SmfApp::ReplyTunnelNeighbors(bool json)
 }
 
 #ifdef ELASTIC_MCAST
-void SmfApp::ReplyGroups(bool json, bool brief)
+void SmfApp::ReplyGroups(bool json, bool brief, bool details)
 {
     std::ostringstream ss;
-    mcast_controller.DumpGroups(brief, json, ss);
+    mcast_controller.DumpGroups(brief, json, ss, details);
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyGroupMemberships(bool json)
+{
+    std::ostringstream ss;
+    mcast_controller.DumpMemberships(json, ss);
     ControlReply(ss.str());
 }
 #endif // ELASTIC_MCAST
@@ -6939,11 +6995,19 @@ void SmfApp::OnShowCommand(const char* arg)
         ReplyTunnelNeighbors(json);
     else if (0 == strcmp(topic, "tunnel"))
         ReplyTunnel(json);
+    else if ((0 == strcmp(topic, "groups")) && (NULL != sub) && (0 == strcmp(sub, "memberships")))
+    {
+#ifdef ELASTIC_MCAST
+        ReplyGroupMemberships(json);
+#else
+        ControlReply(std::string("show groups memberships is only available in elastic builds\n"));
+#endif // ELASTIC_MCAST
+    }
     else if (0 == strcmp(topic, "groups"))
     {
 #ifdef ELASTIC_MCAST
         // Default listing is DumpGroups(false); brief selects the shorter dump.
-        ReplyGroups(json, brief);
+        ReplyGroups(json, brief, details);
 #else
         ControlReply(std::string("show groups is only available in elastic builds\n"));
 #endif // ELASTIC_MCAST
@@ -7966,6 +8030,27 @@ bool SmfApp::SendFrame(unsigned int ifaceIndex, char* frameBuffer, unsigned int 
     return SendFrame(*iface, frameBuffer, frameLength);
 }  // end SmfApp::SendFrame()
 
+bool SmfApp::SendFrameTo(unsigned int ifaceIndex, char* frameBuffer, unsigned int frameLength,
+                         const ProtoAddress& dest)
+{
+    Smf::Interface* iface = smf.GetInterface(ifaceIndex);
+    if (NULL == iface)
+        return false;
+    if (!dest.IsValid() || dest.HostIsEqual(PROTO_ADDR_ANY) || dest.HostIsEqual(PROTO_ADDR_ANY6) ||
+        (ProtoAddress::ETH == dest.GetType()))
+        return SendFrame(*iface, frameBuffer, frameLength);
+
+    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
+    if (NULL == mech)
+        return SendFrame(*iface, frameBuffer, frameLength);
+    CidElement* elem = mech->GetPrincipalElement();
+    if ((NULL == elem) || (ProtoNet::IFACE_GRE != elem->GetProtoCap().GetInterfaceType()))
+        return SendFrame(*iface, frameBuffer, frameLength);
+
+    unsigned int numBytes = frameLength;
+    return mech->SendGreToRemote(elem->GetProtoCap(), frameBuffer, frameLength, dest, numBytes);
+}  // end SmfApp::SendFrameTo()
+
 // Forward IP packet encapsulated in ETH frame using "ProtoCap" (i.e. pcap or similar) device
 bool SmfApp::SendFrame(Smf::Interface& iface, char* frameBuffer, unsigned int frameLength)
 {
@@ -8169,8 +8254,15 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
     bool srcCapIsGRE = (ProtoNet::IFACE_GRE == srcCap.GetInterfaceType());
     if (srcCapIsGRE)
     {
-        // This will be IP instead of ETH and may be INADDR_ANY for mGRE tunnels
+        // Configured remote is INADDR_ANY for mGRE; use the per-packet
+        // GRE outer source so each neighbor has a distinct previous hop.
         prevHopAddr = srcCap.GetTunnelRemoteAddr();
+        if (TunnelAddrUnspecified(prevHopAddr))
+        {
+            const ProtoAddress& pktRemote = srcCap.GetPacketRemoteAddr();
+            if (pktRemote.IsValid() && !TunnelAddrUnspecified(pktRemote))
+                prevHopAddr = pktRemote;
+        }
         nextHopAddr = srcCap.GetTunnelLocalAddr();
     }
     else

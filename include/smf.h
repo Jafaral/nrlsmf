@@ -328,6 +328,10 @@ class Smf
             // For point-to-point GRE tunnel interfaces where endpoint information is explicit
             return iface_info_table.GetIndex(localAddr, remoteAddr);
         }
+        // Match an EM_ACK upstream addr to *this* node's tunnel local or
+        // overlay IP. Do not use GetInterfaceIndex() here: map remotes are
+        // also in that table, so a peer underlay would match every spoke.
+        unsigned int FindInterfaceByLocalEndpoint(const ProtoAddress& addr);
         unsigned int FindTunnelIndex(const ProtoAddress& localAddr, const ProtoAddress& remoteAddr)
         {
             // For point-to-multipoint (mGRE) tunnel interfaces.
@@ -381,6 +385,29 @@ class Smf
                     dests.Insert(remote);
             }
         }
+        // First mapped underlay multicast remote (multicast-underlay mGRE).
+        bool GetTunnelMulticastRemote(unsigned int ifaceIndex, ProtoAddress& dest)
+        {
+            InterfaceInfoTable::Iterator iterator(iface_info_table);
+            InterfaceInfo* info;
+            while (NULL != (info = iterator.GetNextItem()))
+            {
+                if (info->GetIndex() != ifaceIndex)
+                    continue;
+                const ProtoAddress& remote = info->GetRemoteAddress();
+                if (remote.IsValid() && remote.IsMulticast())
+                {
+                    dest = remote;
+                    return true;
+                }
+            }
+            return false;
+        }
+        // True if addr is a unicast GRE peer on this iface (map or learned).
+        bool FindTunnelUnicastPeer(unsigned int ifaceIndex, const ProtoAddress& addr,
+                                   ProtoAddress& dest);
+        bool FindOverlayForUnderlay(unsigned int ifaceIndex, const ProtoAddress& underlay,
+                                    ProtoAddress& overlay);
 
         unsigned int FindMappedIndexForRemote(const ProtoAddress& remote)
         {

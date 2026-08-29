@@ -937,6 +937,8 @@ class MulticastFIB
                     {return downstream_relay_count;}
 
                 void PrintDownstreamRelayList(FILE* filePtr = NULL);  // to ProtoDebug by default
+                DownstreamRelayList& AccessDownstreamRelayList()
+                    {return downstream_relay_list;}
 
                 /*void SetUpstreamRelayAddress(const ProtoAddress& relayAddr, const ProtoAddress& advAddr)
                 {
@@ -1223,8 +1225,8 @@ class MulticastFIB
 #ifdef ADAPTIVE_ROUTING
         bool ParseFlowList( ProtoPktIP& pkt, Entry*& fibEntry, unsigned int currentTick, bool& sendAck,const ProtoAddress& srcMac);
 #endif // ADAPTIVE_ROUTING
-        void DumpFlowList(bool brief, std::ostringstream& ss);
-        void DumpFlowListJson(bool brief, std::ostringstream& ss);
+        void DumpFlowList(bool brief, std::ostringstream& ss, bool details = false);
+        void DumpFlowListJson(bool brief, std::ostringstream& ss, bool details = false);
 
     private:
         EntryTable          flow_table;         // Table of detected flows (updated by forwarding plane)
@@ -1352,11 +1354,15 @@ class ElasticMulticastForwarder
         {
             public:
                 virtual bool SendFrame(unsigned int ifaceIndex, char* buffer, unsigned int length) = 0;
+                // Optional GRE dest (mGRE EM_ACK to one underlay peer).
+                virtual bool SendFrameTo(unsigned int ifaceIndex, char* buffer, unsigned int length,
+                                         const ProtoAddress& dest)
+                    {return SendFrame(ifaceIndex, buffer, length);}
         };  // end class ElasticMulticastForwarder::OutputMechanism
         void SetOutputMechanism(OutputMechanism* mech)
             {output_mechanism = mech;}
 
-        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss);
+        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details = false);
 
     protected:
        // Our "ticker" is a count of microseconds that is used for our
@@ -1450,7 +1456,8 @@ class ElasticMulticastController
         MulticastFIB::MembershipTable& AccessMembershipTable()
             {return membership_table;}
 
-                void DumpGroups(bool brief, bool useJson, std::ostringstream& ss);
+        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details = false);
+        void DumpMemberships(bool useJson, std::ostringstream& ss);
 
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?
