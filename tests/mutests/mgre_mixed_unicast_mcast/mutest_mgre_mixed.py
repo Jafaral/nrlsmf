@@ -23,6 +23,12 @@ set). Traffic that arrives on eth1 is still injected onto gre1.
 The overlay-multicast section captures GRE leaving r0 eth0 and
 checks 8 overlay pps become 24 GRE (8 to 239.1.1.1, 8 to r3, 8 to r4).
 
+After that CF pass, the same overlay nrlsmf processes get runtime
+``with-frr`` and ``elastic overlay``. Two keeper cases:
+
+* Multicast-underlay neighbor h1 at 8 pps; stop h2/h3/h4 (at most 1 pps).
+* Then unicast-only neighbor h3 at 8 pps; stop h1/h2/h4 (at most 1 pps).
+
 u0 unicasts among all five LANs. Its nrlsmf rmerge is only on
 eth0,eth1,eth2 so underlay multicast never reaches r3/r4. That nrlsmf
 instance is a PIM stand-in only; it is not part of the overlay.
@@ -39,18 +45,29 @@ from munet.mutest.userapi import test_step
 from munet.mutest.userapi import wait_step
 
 import sys
+import time
 
 sys.path.insert(0, str(script_dir()))
 sys.path.insert(0, str(script_dir().parent))
 from mixed_hosts import RECV_HOSTS
+from mixed_hosts import ROUTER_HOST_IFACE
+from mixed_hosts import SOURCE_HOST
 from mixed_hosts import cleanup_iperf
+from mixed_hosts import count_overlay_mcast_pkts
+from mixed_hosts import enable_host_igmp
+from mixed_hosts import restart_overlay_mcast_servers
 from mixed_hosts import setup_host_lan
 from mixed_hosts import start_host_mcast_client
 from mixed_hosts import start_overlay_mcast_servers
+from mixed_hosts import wait_igmp_group
 from mixed_hosts import wait_overlay_mcast_receivers
 from smf_cli import check_common_show
+from smf_cli import check_group_elastic
 from smf_cli import check_show_neighbors
 from smf_cli import check_show_tunnel
+from smf_cli import cli_cmd
+from smf_cli import wait_em_flow
+from smf_cli import wait_em_managed
 
 ROUTERS = {
     "r0": {"underlay": "10.0.0.2", "overlay": "172.16.0.1"},
@@ -329,6 +346,109 @@ test_step(
 )
 
 wait_overlay_mcast_receivers(wait_step, RECEIVERS)
+
+KEEP_RECV_MCAST = ("h1",)
+IDLE_RECV_MCAST = ("h2", "h3", "h4")
+KEEP_RECV_UCAST = ("h3",)
+IDLE_RECV_UCAST = ("h1", "h2", "h4")
+EM_WINDOW_S = 2.0
+EM_IDLE_MAX_PPS = 1
+
+
+section("[Mixed] Host IGMP on eth1; h0 joins 239.0.0.1")
+
+# h0 is the sender; join 239.0.0.1 the same way h1..h4 do so r0
+# eth1 is an IGMP host LAN and with-frr sees a local member.
+start_overlay_mcast_servers(step, (SOURCE_HOST,), OVERLAY_MCAST)
+enable_host_igmp(step, wait_step, ROUTERS)
+for name in ROUTERS:
+    wait_igmp_group(wait_step, name, OVERLAY_MCAST)
+
+section("[Mixed] Runtime with-frr + elastic overlay")
+
+# Same running CF processes. Maps, layered gre1, and overlay grouping
+# stay. with-frr starts FRR IGMP polling; elastic overlay turns on EM.
+for name in ROUTERS:
+    inst = f"smf-{name}-mixed"
+    cli_cmd(name, "with-frr", inst)
+    cli_cmd(name, "elastic overlay", inst)
+    check_group_elastic(
+        name, inst, "overlay", enabled=True,
+        ifaces=(ROUTER_HOST_IFACE, GRE_DEV),
+    )
+
+section("[Mixed] EM ack/forwarding state")
+
+# r1 has a local IGMP member (h1): it must ACK upstream so r0 FORWARDs
+# on gre1. Default FwdStatus is usually LIMIT; oif is the per-iface
+# token-bucket status after EM_ACK (show groups details).
+wait_em_flow("r1", "smf-r1-mixed", OVERLAY_MCAST, ack="yes", status="ACTIVE", timeout=20)
+wait_em_flow("r0", "smf-r0-mixed", OVERLAY_MCAST, ack="yes", timeout=20)
+wait_em_managed("r1", "smf-r1-mixed", ROUTER_HOST_IFACE, OVERLAY_MCAST, timeout=20)
+
+section("[Mixed] Overlay mcast after elastic")
+
+# New h1 iperf log so grep cannot match CF-era lines.
+restart_overlay_mcast_servers(step, KEEP_RECV_MCAST, OVERLAY_MCAST)
+wait_overlay_mcast_receivers(wait_step, KEEP_RECV_MCAST)
+
+section("[Mixed] Stop h2/h3/h4; keep multicast neighbor h1")
+
+for name in IDLE_RECV_MCAST:
+    step(name, "pkill iperf || true")
+
+time.sleep(6)
+wait_step(
+    "h1",
+    "tail -n1 iperf-h1-server.log",
+    match="8 pps",
+    desc="h1 still receiving application multicast at 8 pps after elastic",
+    timeout=30,
+)
+
+for name in IDLE_RECV_MCAST:
+    n = count_overlay_mcast_pkts(step, name, OVERLAY_MCAST, window_s=EM_WINDOW_S)
+    pps = n / EM_WINDOW_S
+    test_step(
+        pps <= EM_IDLE_MAX_PPS,
+        f"{name} non-receiver overlay mcast {pps:.1f} pps (at most {EM_IDLE_MAX_PPS})",
+        target=name,
+    )
+
+section("[Mixed] Unicast neighbor h3 joins; rate-limit mcast peers and r4")
+
+# r3 is a unicast inject dest. After h1 leaves, only r3 should ACK so
+# r0 FORWARDs the r3 map and LIMITs underlay 239.1.1.1 and the r4 map.
+for name in IDLE_RECV_UCAST:
+    step(name, "pkill iperf || true")
+restart_overlay_mcast_servers(step, KEEP_RECV_UCAST, OVERLAY_MCAST)
+wait_igmp_group(wait_step, "r3", OVERLAY_MCAST)
+wait_em_flow(
+    "r3", "smf-r3-mixed", OVERLAY_MCAST, ack="yes", status="ACTIVE", timeout=20,
+)
+wait_em_flow("r0", "smf-r0-mixed", OVERLAY_MCAST, ack="yes", timeout=20)
+wait_em_managed("r3", "smf-r3-mixed", ROUTER_HOST_IFACE, OVERLAY_MCAST, timeout=20)
+
+restart_overlay_mcast_servers(step, KEEP_RECV_UCAST, OVERLAY_MCAST)
+wait_overlay_mcast_receivers(wait_step, KEEP_RECV_UCAST)
+
+time.sleep(6)
+wait_step(
+    "h3",
+    "tail -n1 iperf-h3-server.log",
+    match="8 pps",
+    desc="h3 receiving application multicast at 8 pps (unicast-only last hop)",
+    timeout=30,
+)
+
+for name in IDLE_RECV_UCAST:
+    n = count_overlay_mcast_pkts(step, name, OVERLAY_MCAST, window_s=EM_WINDOW_S)
+    pps = n / EM_WINDOW_S
+    test_step(
+        pps <= EM_IDLE_MAX_PPS,
+        f"{name} non-receiver overlay mcast {pps:.1f} pps (at most {EM_IDLE_MAX_PPS})",
+        target=name,
+    )
 
 section("Cleanup")
 

@@ -31,6 +31,18 @@ on `h0` and received on `h1`..`h4`. While that flow is running, the test
 captures 24 GRE packets leaving `r0` `eth0` (8 overlay pps × 3 inject
 dests) and checks they are 8 to `239.1.1.1`, 8 to r3, and 8 to r4.
 
+After that CF pass, the same overlay nrlsmf processes get runtime
+`with-frr` and `elastic overlay` (maps, `layered gre1`, and grouping
+stay). Two keeper cases:
+
+* Keep multicast-underlay neighbor `h1` at 8 pps; stop `h2`/`h3`/`h4`
+  (at most 1 pps).
+* Then only unicast-only neighbor `h3` joins: `h3` at 8 pps; the other
+  multicast neighbors (`h1`/`h2`) and the other unicast neighbor (`h4`)
+  at most 1 pps.
+
+FRR `pimd` serves IGMP on each router's host `eth1`.
+
 ## Run
 
 From `tests/mutests` (requires root, `nrlsmf` on PATH):
