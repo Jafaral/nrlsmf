@@ -1989,49 +1989,215 @@ void MulticastFIB::PruneFlowList(unsigned int currentTick, ElasticMulticastContr
     }
 }  // end MulticastFIB::PruneFlowList()
 
-void MulticastFIB::DumpFlowList(bool brief, std::ostringstream& ss)
+static void FormatIfaceName(unsigned int ifaceIndex, char* ifaceName, unsigned int nameMax,
+                            const char* missing = "<None>")
+{
+    strncpy(ifaceName, missing, nameMax);
+    ifaceName[nameMax] = '\0';
+    if (0 != ifaceIndex)
+        ProtoNet::GetInterfaceName(ifaceIndex, ifaceName, nameMax);
+}
+
+static char FwdStatusLetter(MulticastFIB::ForwardingStatus status)
+{
+    switch (status)
+    {
+        case MulticastFIB::BLOCK:   return 'B';
+        case MulticastFIB::HYBRID:  return 'H';
+        case MulticastFIB::LIMIT:   return 'L';
+        case MulticastFIB::FORWARD: return 'F';
+        case MulticastFIB::DENY:    return 'D';
+        default:                    return '?';
+    }
+}
+
+static void FormatFlowFlagLetters(bool active, bool ack, char* buf, size_t bufLen)
+{
+    size_t n = 0;
+    if (active && (n + 1 < bufLen)) buf[n++] = 'A';
+    if (ack && (n + 1 < bufLen)) buf[n++] = 'K';
+    if ((0 == n) && (n + 1 < bufLen)) buf[n++] = '-';
+    if (bufLen > 0) buf[n] = '\0';
+}
+
+static void FormatMembershipFlagLetters(int flags, char* buf, size_t bufLen)
+{
+    size_t n = 0;
+    if ((0 != (flags & MulticastFIB::Membership::STATIC)) && (n + 1 < bufLen))
+        buf[n++] = 'S';
+    if ((0 != (flags & MulticastFIB::Membership::MANAGED)) && (n + 1 < bufLen))
+        buf[n++] = 'M';
+    if ((0 != (flags & MulticastFIB::Membership::ELASTIC)) && (n + 1 < bufLen))
+        buf[n++] = 'E';
+    if ((0 == n) && (n + 1 < bufLen)) buf[n++] = '-';
+    if (bufLen > 0) buf[n] = '\0';
+}
+
+static void DumpOutboundBuckets(MulticastFIB::Entry& entry, std::ostringstream& ss, bool json,
+                               unsigned int currentTick)
+{
+    MulticastFIB::BucketList::Iterator iterator(entry.AccessBucketList());
+    MulticastFIB::TokenBucket* bucket;
+    bool comma = false;
+    if (json)
+        ss << "[";
+    while (NULL != (bucket = iterator.GetNextItem()))
+    {
+        char ifaceName[Smf::IF_NAME_MAX + 1];
+        FormatIfaceName(bucket->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX);
+        const char* status = MulticastFIB::GetForwardingStatusString(bucket->GetForwardingStatus());
+        if (json)
+        {
+            ss << (comma ? "," : "")
+               << "{\"Interface\" : \"" << ifaceName
+               << "\", \"FwdStatus\" : \"" << status
+               << "\", \"SentPkts\" : " << bucket->GetSentPkts()
+               << ", \"SentPps\" : " << std::fixed << std::setprecision(1)
+               << bucket->GetSentPps(currentTick) << "}";
+        }
+        else
+        {
+            ss << (comma ? " " : "") << ifaceName << ":"
+               << FwdStatusLetter(bucket->GetForwardingStatus())
+               << "(" << bucket->GetSentPkts() << ","
+               << std::fixed << std::setprecision(1)
+               << bucket->GetSentPps(currentTick) << ")";
+        }
+        comma = true;
+    }
+    if (json)
+        ss << "]";
+    else if (!comma)
+        ss << "-";
+}
+
+static void DumpMembershipFlags(int flags, std::ostringstream& ss)
+{
+    bool first = true;
+    ss << "[";
+    if (0 != (flags & MulticastFIB::Membership::STATIC))
+    {
+        ss << "\"STATIC\"";
+        first = false;
+    }
+    if (0 != (flags & MulticastFIB::Membership::MANAGED))
+    {
+        if (!first)
+            ss << ",";
+        ss << "\"MANAGED\"";
+        first = false;
+    }
+    if (0 != (flags & MulticastFIB::Membership::ELASTIC))
+    {
+        if (!first)
+            ss << ",";
+        ss << "\"ELASTIC\"";
+        first = false;
+    }
+    ss << "]";
+}
+
+static void DumpDownstreamRelays(MulticastFIB::Membership& membership, std::ostringstream& ss, bool json)
+{
+    MulticastFIB::DownstreamRelayList::Iterator iterator(membership.AccessDownstreamRelayList());
+    MulticastFIB::DownstreamRelay* relay;
+    bool comma = false;
+    if (json)
+        ss << "[";
+    while (NULL != (relay = iterator.GetNextItem()))
+    {
+        char host[256] = "";
+        relay->GetIpAddr().GetHostString(host, 255);
+        if (json)
+            ss << (comma ? "," : "") << "\"" << host << "\"";
+        else
+            ss << (comma ? "," : "") << host;
+        comma = true;
+    }
+    if (json)
+        ss << "]";
+    else if (!comma)
+        ss << "-";
+}
+
+void MulticastFIB::DumpFlowList(bool brief, std::ostringstream& ss, bool details,
+                               unsigned int currentTick)
 {
     // pass over the flow_table and dump text suitable for command output
     MulticastFIB::Entry* entry = NULL;
     MulticastFIB::EntryTable::Iterator fiberator(flow_table);
 
-    if (brief) {
-        ss << "MCast Address    SRC Interface\n";
-        ss << "---------------- -------------\n";
-    } else {
-        ss << "MCast Address    SRC Address      Status Fwd Status ACK SRC Interface\n";
-        ss << "---------------- ---------------- ------ ---------- --- -------------\n";
+    if (brief)
+    {
+        ss << "group            iif\n"
+           << "---------------- ------------\n";
+    }
+    else
+    {
+        ss << "Flags: A = Active, K = Ack\n"
+           << "Fwd: B = Block, H = Hybrid, L = Limit, F = Forward, D = Deny\n";
+        if (details)
+        {
+            ss << "group            saddr            upstream         iif          flags fwd recv   pps  oif\n"
+               << "---------------- ---------------- ---------------- ------------ ----- --- ------ ---- ----\n";
+        }
+        else
+        {
+            ss << "group            saddr            iif          flags fwd recv   pps\n"
+               << "---------------- ---------------- ------------ ----- --- ------ ----\n";
+        }
     }
 
-   while (NULL != (entry = fiberator.GetNextEntry()))
+    while (NULL != (entry = fiberator.GetNextEntry()))
     {
-        ProtoFlow::Description flow;
         ProtoAddress dst, src;
-        char ifaceName[Smf::IF_NAME_MAX+1] = "<None>";
-        UpstreamRelay *up;
+        char group[64] = "-";
+        char saddr[64] = "*";
+        char uaddr[64] = "-";
+        char iif[Smf::IF_NAME_MAX + 1];
+        char flags[8];
+        UpstreamRelay* up = entry->GetCurrentBestUpstreamRelay();
 
-        flow = entry->GetFlowDescription();
-        up = entry->GetCurrentBestUpstreamRelay();
         entry->GetDstAddr(dst);
-        ss <<  std::left << std::setw(17) << dst.GetHostString();
-        if (!brief) {
-            char srcHostString[256] = "*"; // initialize this, as GetHostString() is a bad actor
-
+        dst.GetHostString(group, sizeof(group) - 1);
+        if (!brief)
+        {
             entry->GetSrcAddr(src);
-            src.GetHostString(srcHostString,255);
-            ss << std::left << std::setw(17) << srcHostString;
-            ss << (entry->IsActive() ? "ACTIVE " : "IDLE   ");
-            ss << std::left << std::setw(11)  << MulticastFIB::GetForwardingStatusString(entry->GetDefaultForwardingStatus());
-            ss << (entry->GetAckingStatus() ? " x  " : "    ");
+            if (src.IsValid())
+                src.GetHostString(saddr, sizeof(saddr) - 1);
+            FormatFlowFlagLetters(entry->IsActive(), entry->GetAckingStatus(), flags, sizeof(flags));
         }
-        if (up) ProtoNet::GetInterfaceName(up->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX);
-        ss << ifaceName;
+        FormatIfaceName(up ? up->GetInterfaceIndex() : 0, iif, Smf::IF_NAME_MAX, "-");
+        if (details && up)
+            up->GetAddress().GetHostString(uaddr, sizeof(uaddr) - 1);
+
+        ss << std::left << std::setw(16) << group << " ";
+        if (brief)
+        {
+            ss << iif << "\n";
+            continue;
+        }
+        ss << std::setw(16) << saddr << " ";
+        if (details)
+            ss << std::setw(16) << uaddr << " ";
+        ss << std::setw(12) << iif << " ";
+        ss << std::setw(5) << flags << " ";
+        ss << FwdStatusLetter(entry->GetDefaultForwardingStatus());
+        ss << "   " << std::setw(6) << entry->GetRecvPkts() << " ";
+        ss << std::fixed << std::setprecision(1) << std::setw(4)
+           << entry->GetRecvPps(currentTick);
+        if (details)
+        {
+            ss << "  ";
+            DumpOutboundBuckets(*entry, ss, false, currentTick);
+        }
         ss << "\n";
     }
 
 }   // end MulticastFIB::DumpFlowList()
 
-void MulticastFIB::DumpFlowListJson(bool brief, std::ostringstream& ss)
+void MulticastFIB::DumpFlowListJson(bool brief, std::ostringstream& ss, bool details,
+                                   unsigned int currentTick)
 {
     // pass over the flow_table and dump text suitable for json output
     MulticastFIB::Entry* entry = NULL;
@@ -2061,9 +2227,21 @@ void MulticastFIB::DumpFlowListJson(bool brief, std::ostringstream& ss)
             ss << "\"Status\" : \"" << (entry->IsActive() ? "ACTIVE" : "IDLE") << "\",";
             ss << "\"FwdStatus\" : \""  << MulticastFIB::GetForwardingStatusString(entry->GetDefaultForwardingStatus()) << "\",";
             ss << "\"Ack\" : \""  << (entry->GetAckingStatus() ? "yes" : "no") << "\",";
+            ss << "\"RecvPkts\" : " << entry->GetRecvPkts() << ",";
+            ss << "\"RecvPps\" : " << std::fixed << std::setprecision(1)
+               << entry->GetRecvPps(currentTick) << ",";
         }
         if (up) ProtoNet::GetInterfaceName(up->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX);
         ss << "\"SrcInterface\" : \""  << ifaceName << "\"";
+        if (details)
+        {
+            char upHost[256] = "";
+            if (up)
+                up->GetAddress().GetHostString(upHost, 255);
+            ss << ", \"UpstreamAddr\" : \"" << upHost << "\"";
+            ss << ", \"Outbound\" : ";
+            DumpOutboundBuckets(*entry, ss, true, currentTick);
+        }
         ss << "}";
         comma = true;
     }
@@ -2222,8 +2400,12 @@ bool ElasticMulticastForwarder::SetForwardingStatus(const ProtoFlow::Description
     //                   static forwarding entries).
 
     // Sets forwarding status for all matching (sub-matching, non-bimatch) entries.
+    // IGMP memberships are dst-only (*,G). FLAG_ALL on that description
+    // never hits the live (S,G) packet FIB entry.
+    int matchFlags = (0 == flowDescription.GetSrcLength()) ?
+                     ProtoFlow::Description::FLAG_DST : ProtoFlow::Description::FLAG_ALL;
     MulticastFIB::EntryTable& flowTable = mcast_fib.AccessFlowTable();
-    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, ProtoFlow::Description::FLAG_ALL, false);  // non bimatch iterator
+    MulticastFIB::EntryTable::Iterator iterator(flowTable, &flowDescription, matchFlags, false);  // non bimatch iterator
     MulticastFIB::Entry* entry = iterator.GetNextEntry();
     if (NULL != entry)
     {
@@ -2302,10 +2484,283 @@ bool ElasticMulticastForwarder::SetManagedStatus(const ProtoFlow::Description& f
     return true;
 }  // end ElasticMulticastForwarder::SetManagedStatus()
 
-void ElasticMulticastForwarder::DumpGroups(bool brief, bool useJson, std::ostringstream& ss)
+static MulticastFIB::Membership* FindIfaceMembership(
+    MulticastFIB::MembershipTable& table,
+    unsigned int ifaceIndex,
+    const ProtoAddress& group)
 {
-    if (useJson) mcast_fib.DumpFlowListJson(brief, ss);
-    else mcast_fib.DumpFlowList(brief, ss);
+    MulticastFIB::MembershipTable::Iterator iterator(table);
+    MulticastFIB::Membership* membership;
+    while (NULL != (membership = iterator.GetNextEntry()))
+    {
+        if (membership->GetInterfaceIndex() != ifaceIndex)
+            continue;
+        ProtoAddress dst;
+        membership->GetDstAddr(dst);
+        if (dst.HostIsEqual(group))
+            return membership;
+    }
+    return NULL;
+}
+
+static const char* OifWhy(MulticastFIB::Membership* membership,
+                          Smf::Interface* iface,
+                          const ProtoAddress& group)
+{
+    if (NULL != membership)
+    {
+        if (membership->FlagIsSet(MulticastFIB::Membership::MANAGED))
+            return "managed";
+        if (membership->FlagIsSet(MulticastFIB::Membership::STATIC))
+            return "static";
+        if (membership->FlagIsSet(MulticastFIB::Membership::ELASTIC))
+            return "ack";
+    }
+    if ((NULL != iface) && iface->IsManaged() && iface->HasActiveMembership(group))
+        return "managed";
+    return "-";
+}
+
+static const char* OifMode(Smf::Interface* iface)
+{
+    if ((NULL != iface) && iface->GetElasticMulticast())
+        return "elastic";
+    return "cf";
+}
+
+static void DumpGroupsNested(MulticastFIB& fib, Smf& smf,
+                             MulticastFIB::MembershipTable* memberships,
+                             bool useJson, std::ostringstream& ss,
+                             unsigned int currentTick)
+{
+    MulticastFIB::EntryTable::Iterator fiberator(fib.AccessFlowTable());
+    MulticastFIB::Entry* entry;
+    bool comma = false;
+    if (useJson)
+        ss << "[";
+    else
+    {
+        ss << "Flags: A = Active, K = Ack\n"
+           << "Selected: Y = current upstream, N = additional inbound\n"
+           << "Fwd: B = Block, H = Hybrid, L = Limit, F = Forward, D = Deny\n"
+           << "Why: managed = IGMP/static last hop, ack = EM_ACK, - = default\n\n"
+           << "group            saddr            flags ack recv   pps\n"
+           << "---------------- ---------------- ----- --- ------ ----\n";
+    }
+    while (NULL != (entry = fiberator.GetNextEntry()))
+    {
+        ProtoAddress dst, src;
+        char group[64] = "-";
+        char saddr[64] = "*";
+        char flags[8];
+        entry->GetDstAddr(dst);
+        dst.GetHostString(group, sizeof(group) - 1);
+        entry->GetSrcAddr(src);
+        if (src.IsValid())
+            src.GetHostString(saddr, sizeof(saddr) - 1);
+        FormatFlowFlagLetters(entry->IsActive(), entry->GetAckingStatus(), flags, sizeof(flags));
+        MulticastFIB::UpstreamRelay* best = entry->GetCurrentBestUpstreamRelay();
+        char bestIif[Smf::IF_NAME_MAX + 1];
+        char bestUp[64] = "";
+        FormatIfaceName(best ? best->GetInterfaceIndex() : 0, bestIif, Smf::IF_NAME_MAX, "-");
+        if (best)
+            best->GetAddress().GetHostString(bestUp, sizeof(bestUp) - 1);
+
+        if (useJson)
+        {
+            ss << (comma ? "," : "") << "{";
+            ss << "\"MCastAddr\" : \"" << group << "\",";
+            ss << "\"SrcAddr\" : \"" << saddr << "\",";
+            ss << "\"Status\" : \"" << (entry->IsActive() ? "ACTIVE" : "IDLE") << "\",";
+            ss << "\"FwdStatus\" : \""
+               << MulticastFIB::GetForwardingStatusString(entry->GetDefaultForwardingStatus())
+               << "\",";
+            ss << "\"Ack\" : \"" << (entry->GetAckingStatus() ? "yes" : "no") << "\",";
+            ss << "\"RecvPkts\" : " << entry->GetRecvPkts() << ",";
+            ss << "\"RecvPps\" : " << std::fixed << std::setprecision(1)
+               << entry->GetRecvPps(currentTick) << ",";
+            ss << "\"SrcInterface\" : \"" << bestIif << "\",";
+            ss << "\"UpstreamAddr\" : \"" << bestUp << "\",";
+            ss << "\"Sources\" : [";
+            MulticastFIB::UpstreamRelayList::Iterator uperator(entry->AccessUpstreamRelayList());
+            MulticastFIB::UpstreamRelay* relay;
+            bool ucomma = false;
+            while (NULL != (relay = uperator.GetNextItem()))
+            {
+                char iif[Smf::IF_NAME_MAX + 1];
+                char uaddr[64] = "";
+                FormatIfaceName(relay->GetInterfaceIndex(), iif, Smf::IF_NAME_MAX);
+                relay->GetAddress().GetHostString(uaddr, sizeof(uaddr) - 1);
+                ss << (ucomma ? "," : "")
+                   << "{\"Interface\" : \"" << iif
+                   << "\", \"UpstreamAddr\" : \"" << uaddr
+                   << "\", \"Selected\" : " << ((relay == best) ? "true" : "false")
+                   << "}";
+                ucomma = true;
+            }
+            ss << "], \"Outbound\" : [";
+            MulticastFIB::BucketList::Iterator biterator(entry->AccessBucketList());
+            MulticastFIB::TokenBucket* bucket;
+            bool bcomma = false;
+            while (NULL != (bucket = biterator.GetNextItem()))
+            {
+                char oif[Smf::IF_NAME_MAX + 1];
+                FormatIfaceName(bucket->GetInterfaceIndex(), oif, Smf::IF_NAME_MAX);
+                Smf::Interface* iface = smf.GetInterface(bucket->GetInterfaceIndex());
+                MulticastFIB::Membership* mem = (NULL != memberships) ?
+                    FindIfaceMembership(*memberships, bucket->GetInterfaceIndex(), dst) : NULL;
+                ss << (bcomma ? "," : "")
+                   << "{\"Interface\" : \"" << oif
+                   << "\", \"FwdStatus\" : \""
+                   << MulticastFIB::GetForwardingStatusString(bucket->GetForwardingStatus())
+                   << "\", \"Mode\" : \"" << OifMode(iface)
+                   << "\", \"Why\" : \"" << OifWhy(mem, iface, dst)
+                   << "\", \"SentPkts\" : " << bucket->GetSentPkts()
+                   << ", \"SentPps\" : " << std::fixed << std::setprecision(1)
+                   << bucket->GetSentPps(currentTick)
+                   << ", \"DownstreamRelays\" : ";
+                if (NULL != mem)
+                    DumpDownstreamRelays(*mem, ss, true);
+                else
+                    ss << "[]";
+                ss << "}";
+                bcomma = true;
+            }
+            ss << "]}";
+        }
+        else
+        {
+            ss << std::left << std::setw(16) << group << " "
+               << std::setw(16) << saddr << " "
+               << std::setw(5) << flags << " "
+               << std::setw(3) << (entry->GetAckingStatus() ? "yes" : "no") << " "
+               << std::setw(6) << entry->GetRecvPkts() << " "
+               << std::fixed << std::setprecision(1) << std::setw(4)
+               << entry->GetRecvPps(currentTick) << "\n";
+            ss << "  sources\n"
+               << "    iif          upstream         sel\n";
+            MulticastFIB::UpstreamRelayList::Iterator uperator(entry->AccessUpstreamRelayList());
+            MulticastFIB::UpstreamRelay* relay;
+            bool anyUp = false;
+            while (NULL != (relay = uperator.GetNextItem()))
+            {
+                char iif[Smf::IF_NAME_MAX + 1];
+                char uaddr[64] = "-";
+                FormatIfaceName(relay->GetInterfaceIndex(), iif, Smf::IF_NAME_MAX);
+                relay->GetAddress().GetHostString(uaddr, sizeof(uaddr) - 1);
+                ss << "    " << std::left << std::setw(12) << iif << " "
+                   << std::setw(16) << uaddr << " "
+                   << ((relay == best) ? "Y" : "N") << "\n";
+                anyUp = true;
+            }
+            if (!anyUp)
+                ss << "    -\n";
+            ss << "  downstream\n"
+               << "    oif          mode     why      fwd sent   pps  relays\n";
+            MulticastFIB::BucketList::Iterator biterator(entry->AccessBucketList());
+            MulticastFIB::TokenBucket* bucket;
+            bool anyOif = false;
+            while (NULL != (bucket = biterator.GetNextItem()))
+            {
+                char oif[Smf::IF_NAME_MAX + 1];
+                FormatIfaceName(bucket->GetInterfaceIndex(), oif, Smf::IF_NAME_MAX);
+                Smf::Interface* iface = smf.GetInterface(bucket->GetInterfaceIndex());
+                MulticastFIB::Membership* mem = (NULL != memberships) ?
+                    FindIfaceMembership(*memberships, bucket->GetInterfaceIndex(), dst) : NULL;
+                ss << "    " << std::left << std::setw(12) << oif << " "
+                   << std::setw(8) << OifMode(iface) << " "
+                   << std::setw(8) << OifWhy(mem, iface, dst) << " "
+                   << FwdStatusLetter(bucket->GetForwardingStatus()) << "   "
+                   << std::setw(6) << bucket->GetSentPkts() << " "
+                   << std::fixed << std::setprecision(1) << std::setw(4)
+                   << bucket->GetSentPps(currentTick) << "  ";
+                if (NULL != mem)
+                    DumpDownstreamRelays(*mem, ss, false);
+                else
+                    ss << "-";
+                ss << "\n";
+                anyOif = true;
+            }
+            if (!anyOif)
+                ss << "    -\n";
+        }
+        comma = true;
+    }
+    if (useJson)
+        ss << "]\n";
+}
+
+void ElasticMulticastForwarder::DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details)
+{
+    unsigned int now = UpdateTicker();
+    if (details && !brief)
+    {
+        Smf& smf = *reinterpret_cast<Smf*>(this);
+        MulticastFIB::MembershipTable* memberships =
+            (NULL != mcast_controller) ? &mcast_controller->AccessMembershipTable() : NULL;
+        DumpGroupsNested(mcast_fib, smf, memberships, useJson, ss, now);
+        return;
+    }
+    if (useJson) mcast_fib.DumpFlowListJson(brief, ss, details, now);
+    else mcast_fib.DumpFlowList(brief, ss, details, now);
+}
+
+void ElasticMulticastForwarder::DumpManagedGroups(bool useJson, std::ostringstream& ss)
+{
+    Smf& smf = *reinterpret_cast<Smf*>(this);
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* iface;
+    bool comma = false;
+    if (useJson)
+        ss << "[";
+    else
+    {
+        ss << "Flags: M = Managed (last-hop HasActiveMembership)\n"
+           << "iface         flags groups\n"
+           << "------------  ----- ------\n";
+    }
+    while (NULL != (iface = iterator.GetNextItem()))
+    {
+        if (useJson)
+        {
+            ss << (comma ? "," : "")
+               << "{\"Interface\" : \"" << iface->GetNameStr()
+               << "\", \"Managed\" : " << (iface->IsManaged() ? "true" : "false")
+               << ", \"Groups\" : [";
+            ProtoAddressList::Iterator git(iface->AccessManagedMemberships());
+            ProtoAddress grp;
+            bool gcomma = false;
+            while (git.GetNextAddress(grp))
+            {
+                char host[64];
+                grp.GetHostString(host, sizeof(host) - 1);
+                ss << (gcomma ? "," : "") << "\"" << host << "\"";
+                gcomma = true;
+            }
+            ss << "]}";
+        }
+        else
+        {
+            ss << std::left << std::setw(14) << iface->GetNameStr()
+               << (iface->IsManaged() ? "M     " : "-     ");
+            ProtoAddressList::Iterator git(iface->AccessManagedMemberships());
+            ProtoAddress grp;
+            bool gcomma = false;
+            while (git.GetNextAddress(grp))
+            {
+                char host[64];
+                grp.GetHostString(host, sizeof(host) - 1);
+                ss << (gcomma ? "," : "") << host;
+                gcomma = true;
+            }
+            if (!gcomma)
+                ss << "-";
+            ss << "\n";
+        }
+        comma = true;
+    }
+    if (useJson)
+        ss << "]\n";
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -2493,11 +2948,21 @@ bool ElasticMulticastController::AddManagedMembership(const ProtoFlow::Descripti
         membership->GetFlowDescription().Print();
         PLOG(PL_ALWAYS, "\n");
     }
-    if (0 == membership->GetFlags())
-    {
-        mcast_forwarder->SetAckingStatus(membership->GetFlowDescription(), true);
-        mcast_forwarder->SetForwardingStatus(membership->GetFlowDescription(), ifaceIndex, MulticastFIB::FORWARD, true);
-    }
+    // Always push FORWARD/ack. A first call can race the FIB entry
+    // (SetForwardingStatus is a no-op if the flow is not there yet);
+    // skipping later refreshes when flags are already set leaves the
+    // last hop stuck at LIMIT.
+    // Flow key must omit iface index: packet FIB entries have index 0.
+    // Membership includes the host iface, so FLAG_ALL on that
+    // description matches nothing and eth1 stays LIMIT.
+    ProtoAddress dstIp, srcIp;
+    membership->GetFlowDescription().GetDstAddr(dstIp);
+    membership->GetFlowDescription().GetSrcAddr(srcIp);
+    ProtoFlow::Description fwdDesc(dstIp, srcIp,
+                                   membership->GetFlowDescription().GetTrafficClass(),
+                                   membership->GetFlowDescription().GetProtocol());
+    mcast_forwarder->SetAckingStatus(fwdDesc, true);
+    mcast_forwarder->SetForwardingStatus(fwdDesc, ifaceIndex, MulticastFIB::FORWARD, true);
     // Set MANAGED status for  _all_ matching memberships for this "ifaceIndex"
     MulticastFIB::MembershipTable::Iterator iterator(membership_table, &membership->GetFlowDescription());
     while (NULL != (membership = iterator.GetNextEntry()))
@@ -2722,7 +3187,8 @@ void ElasticMulticastController::HandleAck(const ElasticAck&   ack,
 {
     //auto smf=reinterpret_cast<Smf*>(mcast_forwarder);
     Smf::Interface* iface = static_cast<Smf::Interface*>(smfIface);
-    if (iface->GetIpAddress().GetType() == ProtoAddress::INVALID)
+    if ((iface->GetIpAddress().GetType() == ProtoAddress::INVALID) &&
+        !iface->GetTunnelLocalAddress().IsValid())
     {
         PLOG(PL_WARN, "ElasticMulticastController::HandleAck() no IP address on interface %s!\n", iface->GetNameStr());
         return;
@@ -3030,15 +3496,22 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
     if (ignoreIdleCount) return;   // NOT SURE THIS ACTUALLY WORKS if ignoreIdleCount == true
     
     // Iterate across all matching (per-interface) memberships, update the packet
-    // counts and status for "ELASTIC" memberships as appropriate
-    // NOTE: this iterator finds _all_ matching interfaces, including dst-only
-    MulticastFIB::MembershipTable::Iterator iterator(membership_table, &flowDescription);
+    // counts and status for "ELASTIC" memberships as appropriate.
+    // FLAG_DST so dst-only IGMP (*,G) memberships match a packet (S,G).
+    // FLAG_ALL prefixes the source and never visits those entries.
+    MulticastFIB::MembershipTable::Iterator iterator(membership_table, &flowDescription,
+                                                     ProtoFlow::Description::FLAG_DST);
     bool ackingStatus = false;
     MulticastFIB::Membership* membership;
     while (NULL != (membership = iterator.GetNextEntry()))
     {
         if (membership->FlagIsSet(MulticastFIB::Membership::ELASTIC))
         {
+            ProtoAddress memSrc, pktSrc;
+            membership->GetFlowDescription().GetSrcAddr(memSrc);
+            flowDescription.GetSrcAddr(pktSrc);
+            if (memSrc.IsValid() && pktSrc.IsValid() && !memSrc.HostIsEqual(pktSrc))
+                continue;
             unsigned int totalPktCount = membership->IncrementIdleCount(pktCount);
             // set the idle threshold to the pps for the flow
             // updateInterval is microseconds
@@ -3103,6 +3576,17 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
         else
         {
             ackingStatus = true;
+            // MANAGED/STATIC (IGMP): the packet flow is the iterator key
+            // (S,G). Push FORWARD on that host iface here; AddManagedMembership
+            // can miss if it searches with a (*,G) membership description.
+            if (membership->FlagIsSet(MulticastFIB::Membership::MANAGED) ||
+                membership->FlagIsSet(MulticastFIB::Membership::STATIC))
+            {
+                mcast_forwarder->SetForwardingStatus(flowDescription,
+                                                     membership->GetInterfaceIndex(),
+                                                     MulticastFIB::FORWARD,
+                                                     true);
+            }
         }
     }
     if (ackingStatus != oldAckingStatus)
@@ -3119,8 +3603,73 @@ void ElasticMulticastController::Update(const ProtoFlow::Description&  flowDescr
 
 
 
- void ElasticMulticastController::DumpGroups(bool brief, bool useJson, std::ostringstream& ss)
+void ElasticMulticastController::DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details)
 {
-    mcast_forwarder->DumpGroups(brief, useJson, ss);
+    mcast_forwarder->DumpGroups(brief, useJson, ss, details);
+}
+
+void ElasticMulticastController::DumpManagedGroups(bool useJson, std::ostringstream& ss)
+{
+    mcast_forwarder->DumpManagedGroups(useJson, ss);
+}
+
+void ElasticMulticastController::DumpMemberships(bool useJson, std::ostringstream& ss)
+{
+    MulticastFIB::MembershipTable::Iterator iterator(membership_table);
+    MulticastFIB::Membership* membership;
+    bool comma = false;
+
+    if (useJson)
+        ss << "[";
+    else
+    {
+        ss << "Flags: S = Static, M = Managed, E = Elastic\n"
+           << "group            saddr            iface        flags relays\n"
+           << "---------------- ---------------- ------------ ----- ----------------\n";
+    }
+
+    while (NULL != (membership = iterator.GetNextEntry()))
+    {
+        ProtoAddress dst, src;
+        char dstHost[256] = "";
+        char srcHost[256] = "*";
+        char ifaceName[Smf::IF_NAME_MAX + 1];
+
+        membership->GetDstAddr(dst);
+        dst.GetHostString(dstHost, 255);
+        membership->GetSrcAddr(src);
+        if (src.IsValid())
+            src.GetHostString(srcHost, 255);
+        FormatIfaceName(membership->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX);
+
+        if (useJson)
+        {
+            ss << (comma ? "," : "") << "{";
+            ss << "\"MCastAddr\" : \"" << dstHost << "\",";
+            ss << "\"SrcAddr\" : \"" << srcHost << "\",";
+            ss << "\"Interface\" : \"" << ifaceName << "\",";
+            ss << "\"Flags\" : ";
+            DumpMembershipFlags(membership->GetFlags(), ss);
+            ss << ", \"DownstreamRelays\" : ";
+            DumpDownstreamRelays(*membership, ss, true);
+            ss << "}";
+            comma = true;
+        }
+        else
+        {
+            char flags[8];
+            FormatMembershipFlagLetters(membership->GetFlags(), flags, sizeof(flags));
+            FormatIfaceName(membership->GetInterfaceIndex(), ifaceName, Smf::IF_NAME_MAX, "-");
+            ss << std::left << std::setw(16) << dstHost << " ";
+            ss << std::setw(16) << srcHost << " ";
+            ss << std::setw(12) << ifaceName << " ";
+            ss << std::setw(5) << flags << " ";
+            DumpDownstreamRelays(*membership, ss, false);
+            ss << "\n";
+        }
+    }
+
+    if (useJson)
+        ss << "]\n";
 }
 

@@ -1,0 +1,154 @@
+# Five independent, disconnected underlay segments chained in series
+# by SMF routers, each segment using a different GRE/mGRE
+# peer-resolution mode -- covering all five modes nrlsmf supports
+# in one end-to-end network.
+#
+#
+#    ha   ha2         hb2        hc2                        hf
+#    |     |          |          |                          |
+#    |     A2         B2         C2                   E2    |
+#    |     |          |          |                    |     |
+#    A -- u0 -- B -- u1 -- C -- u2 -- D -- u3 -- E -- u4 -- F
+#
+#
+# cloud0 (u0, 3 peers): A, A2, B           -- static NBMA mGRE
+# cloud1 (u1, 3 peers): B, B2 (hub/NHS), C  -- NHRP-resolved mGRE
+# cloud2 (u2, 3 peers): C, C2, D            -- multicast-underlay mGRE
+# cloud3 (u3, 2 peers): D, E                -- point-to-point GRE
+# cloud4 (u4, 3 peers): E, E2, F            -- external (metadata) GRE
+#
+# u0..u4 are five SEPARATE underlay routers. There is no IP route
+# anywhere in this topology connecting one segment's addressing to
+# the next. B, C, D, and E route only within each attached
+# segment. The only thing connecting cloud0's
+# traffic all the way to cloud4 is nrlsmf CF -- never IP routing.
+#
+# Application multicast is sourced on ha (off A) and received on
+# ha2 / hb2 / hc2 / hf so nrlsmf CF is first hop onto the overlay
+# and last hop off it on each cloud.
+topology:
+  networks:
+    # cloud0 (behind u0) -- static NBMA mGRE
+    - name: lanA
+    - name: lanA2
+    - name: lanB0     # B's cloud0-facing leg
+    # cloud1 (behind u1) -- NHRP-resolved mGRE
+    - name: lanB1     # B's cloud1-facing leg
+    - name: lanB2     # B2 (cloud1 hub/NHS)
+    - name: lanC0     # C's cloud1-facing leg
+    # cloud2 (behind u2) -- multicast-underlay mGRE
+    - name: lanC1     # C's cloud2-facing leg
+    - name: lanC2     # C2
+    - name: lanD0     # D's cloud2-facing leg
+    # cloud3 (behind u3) -- point-to-point GRE
+    - name: lanD1     # D's cloud3-facing leg
+    - name: lanE0     # E's cloud3-facing leg
+    # cloud4 (behind u4) -- external (metadata) GRE
+    - name: lanE1     # E's cloud4-facing leg
+    - name: lanE2     # E2
+    - name: lanF0     # F
+    # host LANs -- iperf source/receivers, not part of any GRE overlay
+    - name: lanha     # off A (source)
+    - name: lanha2    # off A2 (cloud0)
+    - name: lanhb2    # off B2 (cloud1)
+    - name: lanhc2    # off C2 (cloud2)
+    - name: lanhf     # off F  (cloud4)
+  nodes:
+    - name: u0
+      kind: frr
+      connections:
+        - to: lanA
+        - to: lanA2
+        - to: lanB0
+    - name: u1
+      kind: frr
+      connections:
+        - to: lanB1
+        - to: lanB2
+        - to: lanC0
+    - name: u2
+      kind: frr
+      connections:
+        - to: lanC1
+        - to: lanC2
+        - to: lanD0
+    - name: u3
+      kind: frr
+      connections:
+        - to: lanD1
+        - to: lanE0
+    - name: u4
+      kind: frr
+      connections:
+        - to: lanE1
+        - to: lanE2
+        - to: lanF0
+    - name: ha
+      kind: host
+      connections:
+        - to: lanha
+    - name: ha2
+      kind: host
+      connections:
+        - to: lanha2
+    - name: hb2
+      kind: host
+      connections:
+        - to: lanhb2
+    - name: hc2
+      kind: host
+      connections:
+        - to: lanhc2
+    - name: hf
+      kind: host
+      connections:
+        - to: lanhf
+    - name: A
+      kind: frr
+      connections:
+        - to: lanA
+        - to: lanha
+    - name: A2
+      kind: frr
+      connections:
+        - to: lanA2
+        - to: lanha2
+    - name: B
+      kind: frr
+      connections:
+        - to: lanB0    # cloud0 leg
+        - to: lanB1    # cloud1 leg
+    - name: B2
+      kind: frr
+      connections:
+        - to: lanB2
+        - to: lanhb2
+    - name: C
+      kind: frr
+      connections:
+        - to: lanC0    # cloud1 leg
+        - to: lanC1    # cloud2 leg
+    - name: C2
+      kind: frr
+      connections:
+        - to: lanC2
+        - to: lanhc2
+    - name: D
+      kind: frr
+      connections:
+        - to: lanD0    # cloud2 leg
+        - to: lanD1    # cloud3 leg
+    - name: E
+      kind: frr
+      connections:
+        - to: lanE0    # cloud3 leg
+        - to: lanE1    # cloud4 leg
+    - name: E2
+      kind: frr
+      connections:
+        - to: lanE2
+    - name: F
+      kind: frr
+      connections:
+        - to: lanF0
+        - to: lanhf

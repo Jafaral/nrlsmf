@@ -79,6 +79,7 @@ Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
    sent_count(0), retr_count(0), recv_count(0),
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
+    tunnel_learn_dynamic = false;
 }
 
 Smf::Interface::~Interface()
@@ -131,8 +132,22 @@ void Smf::Interface::Destroy()
     assoc_source_list.Destroy();  // this deletes the items which also removes them from the sources' target lists
     // Destroy our target list
     assoc_target_list.Destroy();
+    ClearLearnedOverlays();
 
 }  // end Smf::Interface::Destroy()
+
+void Smf::Interface::ClearLearnedOverlays()
+{
+    ProtoAddress overlay;
+    ProtoAddressList::Iterator it(learned_overlays);
+    while (it.GetNextAddress(overlay))
+    {
+        const ProtoAddress* underlay =
+            static_cast<const ProtoAddress*>(learned_overlays.GetUserData(overlay));
+        delete const_cast<ProtoAddress*>(underlay);
+    }
+    learned_overlays.Destroy();
+}  // end Smf::Interface::ClearLearnedOverlays()
 
 bool Smf::Interface::AddAssociate(InterfaceGroup& ifaceGroup, Interface& iface)
 {
@@ -1146,24 +1161,41 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): IPv4 Packet detected: Length = %d.\n" , (UINT16)ipv4Pkt.GetLength());
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): IPv4 Packet detected: FragmentOffset = %d.\n" , (UINT16)ipv4Pkt.GetFragmentOffset());
 #ifdef ELASTIC_MCAST
-
+            // EM control may be unicast on mGRE (inner dest is the peer overlay).
+            bool elasticCtl = false;
+            if (ProtoPktIP::UDP == ipv4Pkt.GetProtocol())
+            {
+                ProtoPktUDP peekUdp;
+                if (peekUdp.InitFromPacket(ipv4Pkt) &&
+                    (peekUdp.GetDstPort() == ElasticAck::ELASTIC_PORT))
+                    elasticCtl = true;
+            }
 #endif // ELASTIC_MCAST
 
-            if (!dstIp.IsMulticast() && !GetUnicastEnabled() && !GetAdaptiveRouting())      // only forward multicast dst, unless unicast enabled
+            if (!dstIp.IsMulticast() && !GetUnicastEnabled() && !GetAdaptiveRouting()
+#ifdef ELASTIC_MCAST
+                && !elasticCtl
+#endif // ELASTIC_MCAST
+                )      // only forward multicast dst, unless unicast enabled
             {
 
                 PLOG(PL_DETAIL, "Smf::ProcessPacket() skipping non-multicast IPv4 pkt\n");
                 return 0;
             }
+#ifdef ELASTIC_MCAST
+            else if (elasticCtl ||
+                     (dstIp.IsLinkLocal() &&
+                      (!is_tunnel || dstIp.HostIsEqual(ElasticAck::ELASTIC_ADDR))))
+#else
             else if (dstIp.IsLinkLocal() && !is_tunnel)  // don't forward if link-local dst
+#endif // ELASTIC_MCAST
             {
 #ifdef ELASTIC_MCAST
                 // TBD - use non-link local address for ElasticMcast control messages so that ACK/NACK
                 // message to enable assymmetric/non-reciprocal link topology support
 
                 // Is this an ElasticMulticast ACK? (if so, notify controller)
-                if (dstIp.HostIsEqual(ElasticAck::ELASTIC_ADDR) &&
-                    (ProtoPktIP::UDP == ipv4Pkt.GetProtocol()))
+                if (ProtoPktIP::UDP == ipv4Pkt.GetProtocol())
                 {
                     ProtoPktUDP udpPkt;
                     if (udpPkt.InitFromPacket(ipv4Pkt) && (udpPkt.GetDstPort() == ElasticAck::ELASTIC_PORT))
@@ -1235,6 +1267,13 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                                     PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to GRE interface '%s'\n",
                                                                     upstreamIface->GetNameStr());
                                                 }
+                                                else if ((0 != (upstreamIndex = FindInterfaceByLocalEndpoint(upstreamAddr))) &&
+                                                         (NULL != (upstreamIface = GetInterface(upstreamIndex))))
+                                                {
+                                                    // 2c) mGRE: ACK upstream is our tunnel local (or overlay IP)
+                                                    PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to local endpoint interface '%s'\n",
+                                                                    upstreamIface->GetNameStr());
+                                                }
                                                 else if ((0 != (upstreamIndex = GetInterfaceIndex(upstreamAddr))) &&
                                                          (NULL != (upstreamIface = GetInterface(upstreamIndex))))
                                                 {
@@ -1253,6 +1292,11 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                             // else // else not for me
                                         }
                                     } // end for (UINT8 i = 0; i < upstreamCount
+                                    // mGRE unicast ACK: arrived on this tunnel and mapping
+                                    // missed (no local endpoint match). The GRE dest already
+                                    // selected this node, so apply the ACK to srcIface.
+                                    if ((NULL == upstreamIface) && srcIface.IsGRE())
+                                        mcast_controller->HandleAck(elasticAck, &srcIface, srcIp, prevHopAddr);
                                     break;
                                 }
                                 case ElasticMsg::ADV:
@@ -2030,6 +2074,8 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
     // If there is an ElasticMcast interface group, this will
     // be looked up (or created as needed for new flows)
     MulticastFIB::Entry* fibEntry = NULL;
+    bool recvNoted = false;
+    MulticastFIB::TokenBucket* bucket = NULL;
 
 #endif  // ELASTIC_MCAST
 
@@ -2333,6 +2379,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #endif // ADAPTIVE_ROUTING
 
 #ifdef ELASTIC_MCAST
+        bucket = NULL;
         if (!dstIp.IsMulticast() && IsOwnAddress(dstIp))
         {
             // Don't forward unicast packets destined to self
@@ -2368,8 +2415,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                     }
                 }
             }  // end if (NULL == fibEntry)
+            if (!recvNoted && dstIp.IsMulticast() &&
+                !dstIp.HostIsEqual(ElasticAck::ELASTIC_ADDR))
+            {
+                fibEntry->NoteRecv(currentTick);
+                recvNoted = true;
+            }
             // Get (or create if needed) the token bucket for this outbound iface
-            MulticastFIB::TokenBucket* bucket = fibEntry->GetBucket(dstIface.GetIndex());
+            bucket = fibEntry->GetBucket(dstIface.GetIndex());
             if (NULL != bucket)
             {
                 // Check if the flow passes the bucket's rate limit test
@@ -2398,8 +2451,10 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             if (((ttl > 1) || is_tunnel || outbound) && ((unsigned int)dstCount < dstIfArraySize))
             {
                 dstIfArray[dstCount++] = dstIface.GetIndex();
-
-
+#ifdef ELASTIC_MCAST
+                if (NULL != bucket)
+                    bucket->NoteSent(currentTick);
+#endif // ELASTIC_MCAST
             }
             PLOG(PL_DETAIL, "Smf::ProcessPacket(): Preparing to forward! DstCount = %d \n", dstCount );
         }
@@ -2792,6 +2847,27 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             }
         }
         mcast_fib.InsertEntry(*fibEntry);
+        // IGMP/static memberships are (*,G). Seed last-hop FORWARD on
+        // this new (S,G) so the first packet is not stuck at LIMIT.
+        if (NULL != mcast_controller)
+        {
+            ProtoAddress dstIp;
+            flowDescription.GetDstAddr(dstIp);
+            ProtoFlow::Description dstOnly(dstIp);
+            MulticastFIB::MembershipTable::Iterator memIt(
+                mcast_controller->AccessMembershipTable(), &dstOnly,
+                ProtoFlow::Description::FLAG_DST);
+            MulticastFIB::Membership* membership;
+            while (NULL != (membership = memIt.GetNextEntry()))
+            {
+                if (membership->FlagIsSet(MulticastFIB::Membership::MANAGED) ||
+                    membership->FlagIsSet(MulticastFIB::Membership::STATIC))
+                {
+                    fibEntry->SetForwardingStatus(membership->GetInterfaceIndex(),
+                                                  MulticastFIB::FORWARD, true);
+                }
+            }
+        }
         // Put the new, dynamically detected flow in our "active_list"
         mcast_fib.ActivateFlow(*fibEntry, currentTick);
         updateController = true;
@@ -3223,6 +3299,118 @@ unsigned int Smf::UpdateUpstreamHistory(unsigned int                   currentTi
     }
  }  // end Smf::SendNack()
 
+bool Smf::FindTunnelUnicastPeer(unsigned int ifaceIndex, const ProtoAddress& addr,
+                                ProtoAddress& dest)
+{
+    if (!addr.IsValid() || (ProtoAddress::ETH == addr.GetType()) ||
+        addr.IsMulticast() ||
+        addr.HostIsEqual(PROTO_ADDR_ANY) || addr.HostIsEqual(PROTO_ADDR_ANY6))
+        return false;
+    InterfaceInfoTable::Iterator iterator(iface_info_table);
+    InterfaceInfo* info;
+    while (NULL != (info = iterator.GetNextItem()))
+    {
+        if (info->GetIndex() != ifaceIndex)
+            continue;
+        const ProtoAddress& remote = info->GetRemoteAddress();
+        if (remote.IsValid() && remote.IsUnicast() && remote.HostIsEqual(addr))
+        {
+            dest = remote;
+            return true;
+        }
+    }
+    Interface* iface = GetInterface(ifaceIndex);
+    if (NULL != iface)
+    {
+        const ProtoAddress* underlay =
+            static_cast<const ProtoAddress*>(iface->AccessLearnedOverlays().GetUserData(addr));
+        if ((NULL != underlay) && underlay->IsValid() && underlay->IsUnicast())
+        {
+            dest = *underlay;
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
+struct OverlayNeighCtx
+{
+    const ProtoAddress* underlay;
+    ProtoAddress*       overlay;
+    bool                found;
+};
+
+bool OverlayNeighHandler(unsigned int        /*ifIndex*/,
+                         const ProtoAddress& dst,
+                         const ProtoAddress& lladdr,
+                         unsigned short      /*ndmState*/,
+                         void*               userData)
+{
+    OverlayNeighCtx* ctx = static_cast<OverlayNeighCtx*>(userData);
+    if ((NULL == ctx) || ctx->found)
+        return false;
+    if (lladdr.IsValid() && lladdr.IsUnicast() &&
+        lladdr.HostIsEqual(*ctx->underlay) &&
+        dst.IsValid() && dst.IsUnicast() &&
+        (ProtoAddress::ETH != dst.GetType()))
+    {
+        *ctx->overlay = dst;
+        ctx->found = true;
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+bool Smf::FindOverlayForUnderlay(unsigned int ifaceIndex, const ProtoAddress& underlay,
+                                 ProtoAddress& overlay)
+{
+    Interface* iface = GetInterface(ifaceIndex);
+    if ((NULL == iface) || !underlay.IsValid() || !underlay.IsUnicast())
+        return false;
+    ProtoAddressList& learned = iface->AccessLearnedOverlays();
+    ProtoAddress ov;
+    ProtoAddressList::Iterator it(learned);
+    while (it.GetNextAddress(ov))
+    {
+        const ProtoAddress* ul = static_cast<const ProtoAddress*>(learned.GetUserData(ov));
+        if ((NULL != ul) && ul->HostIsEqual(underlay))
+        {
+            overlay = ov;
+            return true;
+        }
+    }
+    // Explicit-map receivers do not populate learned_overlays. The
+    // static NBMA table is kernel ip neigh on gre1 (overlay -> underlay).
+    OverlayNeighCtx ctx;
+    ctx.underlay = &underlay;
+    ctx.overlay = &overlay;
+    ctx.found = false;
+    ProtoNet::GetInterfaceNeighbors(ifaceIndex, OverlayNeighHandler, &ctx);
+    return ctx.found;
+}
+
+unsigned int Smf::FindInterfaceByLocalEndpoint(const ProtoAddress& addr)
+{
+    if (!addr.IsValid() ||
+        addr.HostIsEqual(PROTO_ADDR_ANY) ||
+        addr.HostIsEqual(PROTO_ADDR_ANY6))
+        return 0;
+    InterfaceList::Iterator it(iface_list);
+    Interface* iface;
+    while (NULL != (iface = it.GetNextInterface()))
+    {
+        const ProtoAddress& tunLocal = iface->GetTunnelLocalAddress();
+        if (tunLocal.IsValid() && tunLocal.HostIsEqual(addr))
+            return iface->GetIndex();
+        const ProtoAddress& ip = iface->GetIpAddress();
+        if (ip.IsValid() && (ProtoAddress::ETH != ip.GetType()) && ip.HostIsEqual(addr))
+            return iface->GetIndex();
+    }
+    return 0;
+}
+
 bool Smf::SendAck(unsigned int                  ifaceIndex,   // interface it goes out on
                   const ProtoAddress&           upstreamAddr, // upstream to address it to
                   const ProtoFlow::Description& flowDescription)
@@ -3243,16 +3431,41 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     // Buid Elastic Ack message (IPv4 only at moment)
     const ProtoAddress& dstMac = (ProtoAddress::ETH == upstreamAddr.GetType()) ? upstreamAddr : ElasticNack::ELASTIC_MAC;
 
-    if (iface.GetIpAddress().GetType() == ProtoAddress::INVALID)
+    const bool mgre = iface.IsGRE() &&
+        (!iface.GetTunnelRemoteAddress().IsValid() ||
+         iface.GetTunnelRemoteAddress().HostIsEqual(PROTO_ADDR_ANY) ||
+         iface.GetTunnelRemoteAddress().HostIsEqual(PROTO_ADDR_ANY6));
+    // P2P GRE uses tunnel local as ACK src. mGRE/ETH use the iface IP
+    // (overlay on gre1); fall back to tunnel local if that is unset.
+    ProtoAddress srcIp;
+    if (iface.IsGRE() && !mgre)
+        srcIp = iface.GetTunnelLocalAddress();
+    else if (iface.GetIpAddress().IsValid() && (ProtoAddress::ETH != iface.GetIpAddress().GetType()))
+        srcIp = iface.GetIpAddress();
+    else
+        srcIp = iface.GetTunnelLocalAddress();
+    if (!srcIp.IsValid() || (ProtoAddress::ETH == srcIp.GetType()))
     {
         PLOG(PL_WARN, "Smf::SendAck()  no IP address on interface %s!\n", iface.GetNameStr());
         return false;
     }
-    // The EM_ACK srcIp depends on whether interface is ETH, GRE, or mGRE
-    const ProtoAddress& srcIp = (iface.IsGRE() &&
-                                 !iface.GetTunnelRemoteAddress().HostIsEqual(PROTO_ADDR_ANY) &&
-                                 !iface.GetTunnelRemoteAddress().HostIsEqual(PROTO_ADDR_ANY6)) ?
-                                    iface.GetTunnelLocalAddress() : iface.GetIpAddress();
+    // Ethernet keeps 224.0.0.55. mGRE unicasts the inner dest to the
+    // peer overlay so gre1 delivers it (224.0.0.55 and the flow src
+    // LAN address are not local on the tunnel).
+    ProtoAddress ackDst = ElasticAck::ELASTIC_ADDR;
+    ProtoAddress mgrePeer;
+    if (mgre)
+    {
+        ProtoAddress overlay;
+        if (FindTunnelUnicastPeer(iface.GetIndex(), upstreamAddr, mgrePeer))
+            ;
+        else if (upstreamAddr.IsValid() && upstreamAddr.IsUnicast() &&
+                 (ProtoAddress::ETH != upstreamAddr.GetType()))
+            mgrePeer = upstreamAddr;
+        if (mgrePeer.IsValid() &&
+            FindOverlayForUnderlay(iface.GetIndex(), mgrePeer, overlay))
+            ackDst = overlay;
+    }
     UINT32 buffer[1416/4];
     unsigned int bufferLen = 1416;
     unsigned int frameMax = bufferLen - 2;  // offset by 2 bytes to maintain alignment for ProtoPktIP
@@ -3266,7 +3479,7 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     ip4Pkt.SetTTL(5);
     ip4Pkt.SetProtocol(ProtoPktIP::UDP);
     ip4Pkt.SetSrcAddr(srcIp);
-    ip4Pkt.SetDstAddr(ElasticAck::ELASTIC_ADDR);
+    ip4Pkt.SetDstAddr(ackDst);
     ProtoPktUDP udpPkt(ip4Pkt.AccessPayload(), ip4Pkt.GetBufferLength() - ip4Pkt.GetHeaderLength() - ProtoPktUMP::GetOptionLength(), false);
     udpPkt.SetSrcPort(ElasticAck::ELASTIC_PORT);
     udpPkt.SetDstPort(ElasticAck::ELASTIC_PORT);
@@ -3327,11 +3540,24 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     {
         PLOG(PL_DEBUG, "nrlsmf: sending EM_ACK (len:%u) for flow \"", ethPkt.GetLength());
         flowDescription.Print();  // to debug output or log
-        PLOG(PL_ALWAYS, " to relay %s via interface index %d\n", upstreamAddr.GetHostString(), iface.GetIndex());
+        PLOG(PL_ALWAYS, " to relay %s via interface index %d dest %s\n",
+             upstreamAddr.GetHostString(), iface.GetIndex(), ackDst.GetHostString());
     }
 
     // TBD - Implement ACK rate limiter by bundling multiple flow acks for common upstream relay
     // (i.e. do this with a timer and some sort of helper classes)
+    // mGRE ACK dest mirrors data inject: unicast if that peer is in the
+    // map (or learned), otherwise the underlay multicast group.
+    if (mgre)
+    {
+        ProtoAddress mcastUnderlay;
+        if (mgrePeer.IsValid())
+            return output_mechanism->SendFrameTo(iface.GetIndex(), (char*)ethPkt.GetBuffer(),
+                                                 ethPkt.GetLength(), mgrePeer);
+        if (GetTunnelMulticastRemote(iface.GetIndex(), mcastUnderlay))
+            return output_mechanism->SendFrameTo(iface.GetIndex(), (char*)ethPkt.GetBuffer(),
+                                                 ethPkt.GetLength(), mcastUnderlay);
+    }
     return output_mechanism->SendFrame(iface.GetIndex(), (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
 
 }  // end Smf::SendAck()

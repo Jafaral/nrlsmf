@@ -71,6 +71,39 @@ class MulticastFIB
         void Update(unsigned int elapsedTime);
         void Prune(unsigned int currentTime, unsigned int ageMax);
 
+        // Packet count plus a ~5s window for recent pps (ticks are microseconds).
+        class RateStat
+        {
+            public:
+                RateStat()
+                    : total(0), window_count(0), window_start(0) {}
+                void Note(unsigned int tick)
+                {
+                    total++;
+                    if ((0 == window_start) || ((tick - window_start) > 5000000u))
+                    {
+                        window_start = tick;
+                        window_count = 0;
+                    }
+                    window_count++;
+                }
+                unsigned int GetTotal() const
+                    {return total;}
+                double GetPps(unsigned int now) const
+                {
+                    if ((0 == window_start) || (0 == window_count))
+                        return 0.0;
+                    unsigned int dt = (now >= window_start) ? (now - window_start) : 0;
+                    if (0 == dt)
+                        return 0.0;
+                    return (double)window_count * 1.0e6 / (double)dt;
+                }
+            private:
+                unsigned int total;
+                unsigned int window_count;
+                unsigned int window_start;
+        };
+
         // TBD - what's the best way to sort our BucketList???
         // a) time-ordered linked list like our Entry ActiveList, or
         // b) indexed by interface index (using this for now)
@@ -89,6 +122,12 @@ class MulticastFIB
 
                 unsigned int GetInterfaceIndex() const
                     {return iface_index;}
+                void NoteSent(unsigned int tick)
+                    {sent_stat.Note(tick);}
+                unsigned int GetSentPkts() const
+                    {return sent_stat.GetTotal();}
+                double GetSentPps(unsigned int now) const
+                    {return sent_stat.GetPps(now);}
                 void CopyStatus(const TokenBucket& bucket)
                 {
                     forwarding_status = bucket.forwarding_status;
@@ -120,6 +159,7 @@ class MulticastFIB
                 unsigned int        token_interval; // microseconds per packet (1.0e+06 / packetsPerSecond)
                 unsigned int        bucket_count;
                 unsigned int        ticker_prev;    // last time bucket was updated (microsecond ticks)
+                RateStat            sent_stat;
         };  // end class MulticastFIB::TokenBucket
 
         // List of token buckets indexed by outbound iface index
@@ -700,6 +740,12 @@ class MulticastFIB
                 unsigned int Age(unsigned int currentTick);
                 unsigned int GetUpdateCount() const
                     {return update_count;}
+                void NoteRecv(unsigned int tick)
+                    {recv_stat.Note(tick);}
+                unsigned int GetRecvPkts() const
+                    {return recv_stat.GetTotal();}
+                double GetRecvPps(unsigned int now) const
+                    {return recv_stat.GetPps(now);}
                 unsigned int GetUpdateInterval() const;
                 bool UpdatePending() const;
                 //unsigned int GetAge(unsigned int currentTick) const;
@@ -762,6 +808,7 @@ class MulticastFIB
                 unsigned int            acking_interval_max;    // in microseconds
                 unsigned int            acking_interval_min;    // in microseconds
                 UINT8                   flow_ttl;
+                RateStat                recv_stat;
 
                 Entry*                  active_prev;
                 Entry*                  active_next;
@@ -937,6 +984,8 @@ class MulticastFIB
                     {return downstream_relay_count;}
 
                 void PrintDownstreamRelayList(FILE* filePtr = NULL);  // to ProtoDebug by default
+                DownstreamRelayList& AccessDownstreamRelayList()
+                    {return downstream_relay_list;}
 
                 /*void SetUpstreamRelayAddress(const ProtoAddress& relayAddr, const ProtoAddress& advAddr)
                 {
@@ -1223,8 +1272,10 @@ class MulticastFIB
 #ifdef ADAPTIVE_ROUTING
         bool ParseFlowList( ProtoPktIP& pkt, Entry*& fibEntry, unsigned int currentTick, bool& sendAck,const ProtoAddress& srcMac);
 #endif // ADAPTIVE_ROUTING
-        void DumpFlowList(bool brief, std::ostringstream& ss);
-        void DumpFlowListJson(bool brief, std::ostringstream& ss);
+        void DumpFlowList(bool brief, std::ostringstream& ss, bool details = false,
+                          unsigned int currentTick = 0);
+        void DumpFlowListJson(bool brief, std::ostringstream& ss, bool details = false,
+                              unsigned int currentTick = 0);
 
     private:
         EntryTable          flow_table;         // Table of detected flows (updated by forwarding plane)
@@ -1352,11 +1403,16 @@ class ElasticMulticastForwarder
         {
             public:
                 virtual bool SendFrame(unsigned int ifaceIndex, char* buffer, unsigned int length) = 0;
+                // Optional GRE dest (mGRE EM_ACK to one underlay peer).
+                virtual bool SendFrameTo(unsigned int ifaceIndex, char* buffer, unsigned int length,
+                                         const ProtoAddress& dest)
+                    {return SendFrame(ifaceIndex, buffer, length);}
         };  // end class ElasticMulticastForwarder::OutputMechanism
         void SetOutputMechanism(OutputMechanism* mech)
             {output_mechanism = mech;}
 
-        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss);
+        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details = false);
+        void DumpManagedGroups(bool useJson, std::ostringstream& ss);
 
     protected:
        // Our "ticker" is a count of microseconds that is used for our
@@ -1450,7 +1506,9 @@ class ElasticMulticastController
         MulticastFIB::MembershipTable& AccessMembershipTable()
             {return membership_table;}
 
-                void DumpGroups(bool brief, bool useJson, std::ostringstream& ss);
+        void DumpGroups(bool brief, bool useJson, std::ostringstream& ss, bool details = false);
+        void DumpMemberships(bool useJson, std::ostringstream& ss);
+        void DumpManagedGroups(bool useJson, std::ostringstream& ss);
 
         // NEXT STEP - IMPLEMENT MECHANISM TO SEND ACKS to UPSTREAM FORWARDERS
         // 1) When do we send an ACK?

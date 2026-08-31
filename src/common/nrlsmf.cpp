@@ -53,6 +53,9 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef LINUX
+#include <linux/neighbour.h>
+#endif
 #include <sstream>
 #include <vector>
 #include <tuple>
@@ -81,6 +84,8 @@ class SmfApp : public ProtoApp
 
         // This is used by ElasticMulticastForwarder to send EM_ACKs, etc
         bool SendFrame(unsigned int ifaceIndex, char* buffer, unsigned int length);
+        bool SendFrameTo(unsigned int ifaceIndex, char* buffer, unsigned int length,
+                         const ProtoAddress& dest);
 
     private:
         void MonitorEventHandler(ProtoChannel&               theChannel,
@@ -99,6 +104,21 @@ class SmfApp : public ProtoApp
         static void Usage();
         static void CliUsage();
         static int RunControlClient(int argc, const char*const* argv);
+
+        bool ControlReply(const char* data, unsigned int numBytes);
+        bool ControlReply(const std::string& s);
+        void OnShowCommand(const char* arg);
+        void ReplyVersion(bool json);
+        void ReplyStats(bool json);
+        void ReplyInfo(bool json);
+        void ReplyInterfaces(bool json);
+        void ReplyTunnel(bool json);
+        void ReplyTunnelNeighbors(bool json);
+#ifdef ELASTIC_MCAST
+        void ReplyGroups(bool json, bool brief, bool details = false);
+        void ReplyGroupMemberships(bool json);
+        void ReplyIgmpGroups(bool json);
+#endif // ELASTIC_MCAST
 
         bool LoadConfig(const char* configPath);
         bool ProcessGroupConfig(ProtoJson::Object& groupConfig);
@@ -195,6 +215,24 @@ class SmfApp : public ProtoApp
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
+        bool GreDeviceIsUnicastMgre(Smf::Interface& iface);
+        bool MaybeEnableUnderlayGreDemux(const ProtoAddress& groupAddr);
+        bool EnableUnderlayGreDemux(const ProtoAddress& groupAddr, const char* ifaceName);
+        void OnUnderlayGreCapture(ProtoChannel&              theChannel,
+                                  ProtoChannel::Notification notifyType);
+
+        static bool OnNeighborDump(unsigned int         ifIndex,
+                                   const ProtoAddress&  dst,
+                                   const ProtoAddress&  lladdr,
+                                   unsigned short       ndmState,
+                                   void*                userData);
+        void DumpLearnedTunnelNeighbors(Smf::Interface& iface);
+        void ClearLearnedTunnelNeighbors(Smf::Interface& iface);
+        void UpdateLearnedTunnelPeer(Smf::Interface&     iface,
+                                     const ProtoAddress& overlay,
+                                     const ProtoAddress& underlay,
+                                     unsigned short      ndmState,
+                                     bool                deleted);
 
         void DisplayGroups();
 
@@ -240,7 +278,7 @@ class SmfApp : public ProtoApp
         class InterfaceMechanism : public Smf::Interface::Extension
         {
             public:
-                InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool);
+                InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool, Smf& theSmf);
                 ~InterfaceMechanism();
 
                 Smf::Interface& GetInterface() {return smf_iface;}
@@ -283,6 +321,9 @@ class SmfApp : public ProtoApp
 
                 enum TxStatus {TX_OK, TX_BLOCK,TX_ERROR};
                 TxStatus SendFrame(char* frame, unsigned int frameLen);
+                bool SendGrePayload(ProtoCap& cap, char* frame, unsigned int frameLength, unsigned int& numBytes);
+                bool SendGreToRemote(ProtoCap& cap, char* frame, unsigned int frameLength,
+                                     const ProtoAddress& dest, unsigned int& numBytes);
 
 
                 void ResetTxIterator() {tx_iterator.Reset();}
@@ -307,6 +348,7 @@ class SmfApp : public ProtoApp
             private:
                 Smf::Interface&             smf_iface;
                 SmfPacket::Pool&            pkt_pool;
+                Smf&                        smf;
                 ProtoVif*                   proto_vif;
                 bool                        is_shadowing;
                 bool                        block_igmp;
@@ -426,6 +468,9 @@ class SmfApp : public ProtoApp
         ProtoTimer                  igmp_query_timer;
 #endif // ELASTIC_MCAST
         ProtoSocket                 underlay_group_socket;  // used for joining mGRE underlay groups
+        ProtoAddressList            underlay_join_groups;   // ujoin group -> underlay ifindex
+        ProtoCap*                   underlay_gre_cap;       // GRE-in-mcast capture (unicast mGRE only)
+        ProtoAddressList            underlay_gre_groups;    // groups that need capture demux
 #ifdef ADAPTIVE_ROUTING
         SmartController             smart_controller;
 #endif // ADAPTIVE_ROUTING
@@ -455,8 +500,8 @@ class SmfApp : public ProtoApp
 
 const unsigned int SmfApp::BUFFER_MAX = FRAME_SIZE_MAX + 2 + (256 *sizeof(UINT32));
 
-SmfApp::InterfaceMechanism::InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool)
- : smf_iface(iface), pkt_pool(pktPool), proto_vif(NULL), is_shadowing(false), block_igmp(false),
+SmfApp::InterfaceMechanism::InterfaceMechanism(Smf::Interface& iface, SmfPacket::Pool& pktPool, Smf& theSmf)
+ : smf_iface(iface), pkt_pool(pktPool), smf(theSmf), proto_vif(NULL), is_shadowing(false), block_igmp(false),
    cid_list_length(0), cid_mirror(true), tx_iterator(cid_list), output_notification(false),
 #ifdef _PROTO_DETOUR
    proto_detour(NULL),
@@ -650,6 +695,65 @@ SmfApp::CidElement* SmfApp::InterfaceMechanism::GetNextTxElement(bool autoReset)
     return elem;
 }  // end  SmfApp::InterfaceMechanism::GetNetTxElement()
 
+bool SmfApp::InterfaceMechanism::SendGrePayload(ProtoCap& cap, char* frame, unsigned int frameLength, unsigned int& numBytes)
+{
+    // GRE inject is inner IP only. A wildcard-remote mGRE interface has no
+    // single kernel dest; overlay multicast is sent once per mapped remote
+    // (unicast peers and/or an underlay multicast group).
+    numBytes = frameLength - 14;
+    char* payload = frame + 14;
+    const bool overlayMcast = (0 != (0x01 & ((UINT8)frame[0])));
+    ProtoAddressList dests;
+    if (overlayMcast)
+        smf.GetTunnelUnicastRemotes(smf_iface.GetIndex(), dests);
+    if (dests.IsEmpty())
+        return cap.Send(payload, numBytes);
+
+    ProtoAddress saved = cap.GetTunnelRemoteAddr();
+    bool success = false;
+    unsigned int sentBytes = 0;
+    ProtoAddressList::Iterator it(dests);
+    ProtoAddress peer;
+    while (it.GetNextAddress(peer))
+    {
+        unsigned int n = frameLength - 14;
+        cap.SetTunnelRemoteAddr(peer);
+        bool ok = cap.Send(payload, n);
+        if (0 == n)
+            ok = false;
+        if (ok)
+        {
+            success = true;
+            sentBytes = n;
+        }
+        else
+        {
+            PLOG(PL_WARN, "SendGrePayload() failed via %s dest %s\n",
+                 smf_iface.GetNameStr(), peer.GetHostString());
+        }
+    }
+    cap.SetTunnelRemoteAddr(saved);
+    numBytes = success ? sentBytes : 0;
+    return success;
+}  // end SmfApp::InterfaceMechanism::SendGrePayload()
+
+bool SmfApp::InterfaceMechanism::SendGreToRemote(ProtoCap& cap, char* frame, unsigned int frameLength,
+                                                 const ProtoAddress& dest, unsigned int& numBytes)
+{
+    // One GRE outer dest (EM_ACK to a specific mGRE neighbor).
+    numBytes = frameLength - 14;
+    char* payload = frame + 14;
+    ProtoAddress saved = cap.GetTunnelRemoteAddr();
+    cap.SetTunnelRemoteAddr(dest);
+    unsigned int n = numBytes;
+    bool ok = cap.Send(payload, n);
+    cap.SetTunnelRemoteAddr(saved);
+    if (0 == n)
+        ok = false;
+    numBytes = ok ? n : 0;
+    return ok;
+}  // end SmfApp::InterfaceMechanism::SendGreToRemote()
+
 SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char* frame, unsigned int frameLength)
 {
     bool success = false;
@@ -665,9 +769,7 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
         }
         else if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
         {
-            // Just send the IP payload portion
-            numBytes -= 14;
-            success = elem->GetProtoCap().Send(frame + 14, numBytes);
+            success = SendGrePayload(elem->GetProtoCap(), frame, frameLength, numBytes);
         }
         else if ((NULL != proto_vif) && !is_shadowing)
         {
@@ -697,8 +799,7 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
                 bool mirrorSuccess;
                 if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
                 {
-                    numBytes -= 14;
-                    mirrorSuccess = elem->GetProtoCap().Send(frame + 14, numBytes);
+                    mirrorSuccess = SendGrePayload(elem->GetProtoCap(), frame, frameLength, numBytes);
                 }
                 else if (is_shadowing)
                 {
@@ -730,8 +831,7 @@ SmfApp::InterfaceMechanism::TxStatus SmfApp::InterfaceMechanism::SendFrame(char*
                 numBytes = frameLength;
                 if (ProtoNet::IFACE_GRE == elem->GetProtoCap().GetInterfaceType())
                 {
-                    numBytes -= 14;
-                    success = elem->GetProtoCap().Send(frame + 14, numBytes);
+                    success = SendGrePayload(elem->GetProtoCap(), frame, frameLength, numBytes);
                 }
                 else if (is_shadowing)
                 {
@@ -997,6 +1097,7 @@ SmfApp::SmfApp()
    igmp_controller(GetTimerMgr(), smf),
 #endif // ELASTIC_MCAST
    underlay_group_socket(ProtoSocket::UDP),
+   underlay_gre_cap(NULL),
 #ifdef ADAPTIVE_ROUTING
    smart_controller(GetTimerMgr()),
 #endif  // ADAPTIVE_ROUTING
@@ -1039,7 +1140,7 @@ void SmfApp::Usage()
 {
     const char* const* nextCmd = CMD_LIST;
     fprintf(stderr, "Usage: nrlsmf [options]:\n");
-    fprintf(stderr, "       nrlsmf --cli [-i <instance>] <command> [args...]\n");
+    fprintf(stderr, "       nrlsmf --cli [-i <instance>] -c <command> [-c <command> ...]\n");
     while (*nextCmd) {
         const char* cmd = &(*nextCmd)[1];
         nextCmd++;
@@ -1112,7 +1213,7 @@ const char* const SmfApp::CMD_LIST[] =
     "+leave",           "[<srcAddr>->]<dstAddr>[,<protocol>[,<class>]]] (Note <srcAddr> can optionally be an interface name)",
     "+load",            "<configFile>   : load nrlsmf JSON configuration file",
     "+log",             "<logFile>      : debug log file",
-    "+map",             "<iface>,<localAddr>[,<remoteAddr>] : maps tunnel endpoint information for a GRE interface (or other ancillary iface->address assocation)",
+    "+map",             "<iface>,<localAddr>[,<remoteAddr>|dynamic] : map tunnel endpoints (0.0.0.0 = wildcard remote; dynamic = learn peers from kernel neigh)",
     "+merge",           "<ifaceList>  : forward _among_ all iface's listed",
     "+push",            "<srcIface,dstIfaceList> : forward packets from srcIFace to all dstIface's listed",
     "+queue",           "[<iface>,]<limit> : perform SMF packet queuing",
@@ -1176,75 +1277,197 @@ SmfApp::CmdType SmfApp::GetCmdType(const char* cmd)
     return type;
 }  // end SmfApp::GetCmdType()
 
-// Status/query verbs handled in OnControlMsg that reply on server_pipe.
-static const struct
+// Modern CLI show commands. Legacy one-shot verbs (groupsj, jsonStats, ...)
+// remain on the control socket for machine clients.
+// A command is <topic> plus an optional subcommand (e.g. "interface grouping").
+// json/brief/details are optional modifiers; a command may support none, one, or
+// both of brief/details. The unmodified command is the default listing.
+static const struct ShowTopicSpec
 {
     const char* name;
+    const char* sub;     // NULL, or a subcommand such as "grouping"
     const char* help;
+    bool        json;
+    bool        brief;
+    bool        details;
     bool        elasticOnly;
-} kCliQueryCmds[] =
+} kShowTopics[] =
 {
-    { "ping",         "heartbeat; returns pong if nrlsmf is running", false },
-    { "stats",        "per-interface packet/flow counters (text table)", false },
-    { "jsonStats",    "same as stats, JSON", false },
-    { "info",         "interface groups (text table)", false },
-    { "jsonInfo",     "same as info, JSON", false },
-    { "jsonVersion",  "nrlsmf version as JSON", false },
-    { "interfaces",   "configured interfaces (text table)", false },
-    { "interfacesj",  "same as interfaces, JSON", false },
-    { "groups",       "elastic multicast groups (text)", true },
-    { "groupsj",      "same as groups, JSON", true },
-    { "brfgroups",    "brief elastic multicast groups (text)", true },
-    { "brfgroupsj",   "same as brfgroups, JSON", true },
-    { NULL, NULL, false }
+    { "version",     NULL,         "nrlsmf version",                     true, false, false, false },
+    { "statistics",  NULL,         "per-interface packet/flow counters", true, false, false, false },
+    { "interface",   NULL,         "configured interfaces",              true, false, false, false },
+    { "interface",   "grouping",   "SMF interface groups",               true, false, false, false },
+    { "tunnel",      NULL,         "tunnel endpoint mappings",           true, false, false, false },
+    { "tunnel",      "neighbors",  "GRE/mGRE neighbors",                 true, false, false, false },
+    { "groups",      NULL,           "elastic multicast flows",            true, true,  true,  true  },
+    { "groups",      "memberships",  "EM memberships and downstream relays", true, false, false, true },
+    { "igmp",        "groups",       "IGMP last-hop groups (with-frr)",    true, false, false, true },
+    { NULL, NULL, NULL, false, false, false, false }
 };
+
+static const ShowTopicSpec* FindShowTopic(const char* name, const char* sub)
+{
+    if (NULL == name)
+        return NULL;
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        if (0 != strcmp(name, kShowTopics[i].name))
+            continue;
+        if (NULL == sub)
+        {
+            if (NULL == kShowTopics[i].sub)
+                return &kShowTopics[i];
+        }
+        else if ((NULL != kShowTopics[i].sub) && (0 == strcmp(sub, kShowTopics[i].sub)))
+        {
+            return &kShowTopics[i];
+        }
+    }
+    return NULL;
+}
+
+static bool IsShowSubcommand(const char* name, const char* word)
+{
+    return (NULL != FindShowTopic(name, word));
+}
+
+static void FormatShowMods(std::ostringstream& ss, const ShowTopicSpec& topic)
+{
+    if (topic.brief)
+        ss << " [brief]";
+    if (topic.details)
+        ss << " [details]";
+    if (topic.json)
+        ss << " [json]";
+}
+
+static void FormatShowHelp(std::ostringstream& ss)
+{
+    ss << "Show commands:\n"
+       << "  nrlsmf --cli [-i <instance>] -c \"show <command> [modifiers]\"\n"
+       << "\n";
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        std::ostringstream line;
+        line << "  show " << kShowTopics[i].name;
+        if (NULL != kShowTopics[i].sub)
+            line << " " << kShowTopics[i].sub;
+        FormatShowMods(line, kShowTopics[i]);
+        ss << std::left << std::setw(40) << line.str() << kShowTopics[i].help;
+        if (kShowTopics[i].elasticOnly)
+            ss << " (elastic build)";
+        ss << "\n";
+    }
+    ss << "\n"
+       << "Modifiers are optional and command-specific. json, when used, is last:\n"
+       << "  brief     less output than the default listing\n"
+       << "  details   more output than the default listing\n"
+       << "  json      machine-readable JSON\n"
+       << "\n"
+       << "Examples:\n"
+       << "  nrlsmf --cli -c \"show statistics\"\n"
+       << "  nrlsmf --cli -c \"show statistics json\"\n"
+       << "  nrlsmf --cli -c \"show interface\"\n"
+       << "  nrlsmf --cli -c \"show interface grouping\"\n"
+       << "  nrlsmf --cli -c \"show interface grouping json\"\n"
+       << "  nrlsmf --cli -c \"show tunnel\"\n"
+       << "  nrlsmf --cli -c \"show tunnel neighbors\"\n"
+       << "  nrlsmf --cli -c \"show groups brief\"\n"
+       << "  nrlsmf --cli -c \"show groups brief json\"\n"
+       << "  nrlsmf --cli -c \"show groups details json\"\n"
+       << "  nrlsmf --cli -c \"show groups memberships json\"\n"
+       << "  nrlsmf --cli -c \"show igmp groups json\"\n"
+       << "  nrlsmf --cli -i smf-p4 -c \"show interface json\"\n"
+       << "\n"
+       << "Configuration commands (debug, add, relay, map, ...) use the same\n"
+       << "--cli -c syntax and do not return a reply. See \"nrlsmf help\".\n";
+}
 
 static void CliQueryHelp()
 {
-    printf("Query / show commands:\n");
-    printf("  nrlsmf --cli [-i <instance>] <command>\n\n");
-    for (unsigned int i = 0; NULL != kCliQueryCmds[i].name; i++)
-    {
-        printf("  %-14s %s%s\n",
-               kCliQueryCmds[i].name,
-               kCliQueryCmds[i].help,
-               kCliQueryCmds[i].elasticOnly ? " (elastic build)" : "");
-    }
-    printf("\nConfiguration commands (debug, add, relay, map, ...) use the same\n"
-           "--cli syntax and do not return a reply. See \"nrlsmf help\".\n");
+    std::ostringstream ss;
+    FormatShowHelp(ss);
+    fputs(ss.str().c_str(), stdout);
 }
 
 void SmfApp::CliUsage()
 {
     fprintf(stderr,
-            "Usage: nrlsmf --cli [-i <instance>] <command> [args...]\n"
+            "Usage: nrlsmf --cli [-i <instance>] -c <command> [-c <command> ...]\n"
             "       nrlsmf --cli [-i <instance>] ?\n"
             "\n"
             "Send a runtime command to a running nrlsmf instance via its\n"
             "control socket (default instance \"%s\" -> /tmp/%s).\n"
+            "Repeat -c to send more than one command in order.\n"
             "\n"
             "Options:\n"
             "  -i, --instance <name>  Target instance (default: %s)\n"
+            "  -c, --cmd <text>       Command to send (repeatable)\n"
             "  -h, --help             Show this help\n"
-            "  ?                      List query / show commands\n"
+            "  ?                      List show commands\n"
             "\n"
             "Examples:\n"
             "  nrlsmf --cli ?\n"
-            "  nrlsmf --cli ping\n"
-            "  nrlsmf --cli stats\n"
-            "  nrlsmf --cli jsonInfo\n"
-            "  nrlsmf --cli debug 2\n"
-            "  nrlsmf --cli -i smf-r0 relay off\n",
+            "  nrlsmf --cli -c \"show statistics\"\n"
+            "  nrlsmf --cli -c \"show interface grouping\" -c \"show statistics\"\n"
+            "  nrlsmf --cli -c \"show groups brief json\"\n"
+            "  nrlsmf --cli -c \"debug 2\"\n"
+            "  nrlsmf --cli -i smf-r0 -c \"relay off\"\n",
             DEFAULT_INSTANCE_NAME, DEFAULT_INSTANCE_NAME, DEFAULT_INSTANCE_NAME);
 }
 
-static bool CliExpectsReply(const char* cmd)
+static const char* CliSkipSpace(const char* s)
 {
-    if (NULL == cmd)
+    while ((NULL != s) && isspace((unsigned char)*s))
+        s++;
+    return s;
+}
+
+static bool CliCopyFirstToken(const char* s, char* out, size_t outLen)
+{
+    s = CliSkipSpace(s);
+    if ((NULL == s) || ('\0' == *s) || (outLen < 2))
         return false;
-    for (unsigned int i = 0; NULL != kCliQueryCmds[i].name; i++)
+    size_t n = 0;
+    while ((s[n] != '\0') && !isspace((unsigned char)s[n]))
+        n++;
+    if (n >= outLen)
+        n = outLen - 1;
+    memcpy(out, s, n);
+    out[n] = '\0';
+    return true;
+}
+
+static bool CliIsLocalHelp(const char* message)
+{
+    const char* s = CliSkipSpace(message);
+    if ((NULL == s) || ('\0' == *s))
+        return false;
+    if (0 == strcmp(s, "?"))
+        return true;
+    if (0 != strncmp(s, "show", 4) || ((s[4] != '\0') && !isspace((unsigned char)s[4])))
+        return false;
+    s = CliSkipSpace(s + 4);
+    return ('\0' == *s) || (0 == strcmp(s, "?"));
+}
+
+static bool CliExpectsReply(const char* message)
+{
+    char cmd[64];
+    if (!CliCopyFirstToken(message, cmd, sizeof(cmd)))
+        return false;
+    if ((0 == strcmp(cmd, "show")) || (0 == strcmp(cmd, "ping")))
+        return true;
+    static const char* const kLegacyQueryCmds[] =
     {
-        if (0 == strcmp(cmd, kCliQueryCmds[i].name))
+        "stats", "jsonStats", "info", "jsonInfo", "jsonVersion",
+        "interfaces", "interfacesj", "groups", "groupsj",
+        "brfgroups", "brfgroupsj",
+        NULL
+    };
+    for (const char* const* p = kLegacyQueryCmds; NULL != *p; p++)
+    {
+        if (0 == strcmp(cmd, *p))
             return true;
     }
     return false;
@@ -1272,6 +1495,8 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
     SetDebugLevel(PL_ERROR);
 
     const char* instance = DEFAULT_INSTANCE_NAME;
+    std::vector<const char*> commands;
+    bool sawHelpPositional = false;
     int i = 2;
     while (i < argc)
     {
@@ -1291,6 +1516,28 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
             instance = argv[++i];
             i++;
         }
+        else if ((0 == strcmp(argv[i], "-c")) || (0 == strcmp(argv[i], "--cmd")))
+        {
+            if ((i + 1) >= argc)
+            {
+                fprintf(stderr, "nrlsmf --cli: %s requires a command string\n", argv[i]);
+                CliUsage();
+                return 1;
+            }
+            const char* cmd = CliSkipSpace(argv[++i]);
+            if ((NULL == cmd) || ('\0' == *cmd))
+            {
+                fprintf(stderr, "nrlsmf --cli: empty command\n");
+                return 1;
+            }
+            commands.push_back(cmd);
+            i++;
+        }
+        else if (0 == strcmp(argv[i], "?"))
+        {
+            sawHelpPositional = true;
+            i++;
+        }
         else if ('-' == argv[i][0])
         {
             fprintf(stderr, "nrlsmf --cli: unknown option %s\n", argv[i]);
@@ -1299,39 +1546,43 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
         }
         else
         {
+            fprintf(stderr, "nrlsmf --cli: pass commands with -c, e.g. -c \"%s\"\n", argv[i]);
+            CliUsage();
+            return 1;
+        }
+    }
+
+    if (commands.empty())
+    {
+        if (sawHelpPositional)
+        {
+            CliQueryHelp();
+            return 0;
+        }
+        CliUsage();
+        return 1;
+    }
+    if (sawHelpPositional)
+    {
+        fprintf(stderr, "nrlsmf --cli: unexpected '?'; use -c \"?\" to list show commands\n");
+        return 1;
+    }
+
+    bool anyRemote = false;
+    for (size_t n = 0; n < commands.size(); n++)
+    {
+        if (!CliIsLocalHelp(commands[n]))
+        {
+            anyRemote = true;
             break;
         }
     }
 
-    if (i >= argc)
+    if (!anyRemote)
     {
-        CliUsage();
-        return 1;
-    }
-
-    if (0 == strcmp(argv[i], "?"))
-    {
-        CliQueryHelp();
+        for (size_t n = 0; n < commands.size(); n++)
+            CliQueryHelp();
         return 0;
-    }
-
-    const char* cmd = argv[i];
-    char message[8192];
-    size_t used = 0;
-    message[0] = '\0';
-    for (int a = i; a < argc; a++)
-    {
-        size_t argLen = strlen(argv[a]);
-        if ((used + argLen + 2) >= sizeof(message))
-        {
-            fprintf(stderr, "nrlsmf --cli: command too long\n");
-            return 1;
-        }
-        if (used > 0)
-            message[used++] = ' ';
-        memcpy(message + used, argv[a], argLen);
-        used += argLen;
-        message[used] = '\0';
     }
 
     char listenName[64];
@@ -1358,45 +1609,54 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
         return 1;
     }
 
-    const bool wantsReply = CliExpectsReply(cmd);
-    if (wantsReply)
+    bool startedServer = false;
+    for (size_t n = 0; n < commands.size(); n++)
     {
-        // Status replies are sent on server_pipe, not back to the requester.
-        // Register this process as the (temporary) controller so we receive them.
-        char startMsg[128];
-        snprintf(startMsg, sizeof(startMsg), "smfServerStart %s", listenName);
-        unsigned int numBytes = (unsigned int)strlen(startMsg) + 1;
-        if (!smfPipe.Send(startMsg, numBytes))
+        const char* cmd = commands[n];
+        if (CliIsLocalHelp(cmd))
         {
-            fprintf(stderr, "nrlsmf --cli: failed to send smfServerStart to instance \"%s\"\n",
-                    instance);
+            CliQueryHelp();
+            continue;
+        }
+
+        if (CliExpectsReply(cmd) && !startedServer)
+        {
+            // Status replies are sent on server_pipe, not back to the requester.
+            // Register this process as the (temporary) controller so we receive them.
+            char startMsg[128];
+            snprintf(startMsg, sizeof(startMsg), "smfServerStart %s", listenName);
+            unsigned int numBytes = (unsigned int)strlen(startMsg) + 1;
+            if (!smfPipe.Send(startMsg, numBytes))
+            {
+                fprintf(stderr, "nrlsmf --cli: failed to send smfServerStart to instance \"%s\"\n",
+                        instance);
+                smfPipe.Close();
+                listenPipe.Close();
+                return 1;
+            }
+            startedServer = true;
+        }
+
+        unsigned int numBytes = (unsigned int)strlen(cmd) + 1;
+        if (!smfPipe.Send(cmd, numBytes))
+        {
+            fprintf(stderr, "nrlsmf --cli: failed to send command to instance \"%s\"\n", instance);
             smfPipe.Close();
             listenPipe.Close();
             return 1;
         }
-    }
 
-    unsigned int numBytes = (unsigned int)used + 1;
-    if (!smfPipe.Send(message, numBytes))
-    {
-        fprintf(stderr, "nrlsmf --cli: failed to send command to instance \"%s\"\n", instance);
-        smfPipe.Close();
-        listenPipe.Close();
-        return 1;
-    }
-
-    int exitStatus = 0;
-    if (wantsReply)
-    {
-        char reply[8192];
-        unsigned int replyLen = sizeof(reply);
-        if (!CliRecvWithTimeout(listenPipe, reply, replyLen, 2000))
+        if (CliExpectsReply(cmd))
         {
-            fprintf(stderr, "nrlsmf --cli: timed out waiting for reply to \"%s\"\n", cmd);
-            exitStatus = 1;
-        }
-        else
-        {
+            char reply[8192];
+            unsigned int replyLen = sizeof(reply);
+            if (!CliRecvWithTimeout(listenPipe, reply, replyLen, 2000))
+            {
+                fprintf(stderr, "nrlsmf --cli: timed out waiting for reply to \"%s\"\n", cmd);
+                smfPipe.Close();
+                listenPipe.Close();
+                return 1;
+            }
             fwrite(reply, 1, replyLen, stdout);
             if ((0 == replyLen) || ('\n' != reply[replyLen - 1]))
                 fputc('\n', stdout);
@@ -1405,7 +1665,7 @@ int SmfApp::RunControlClient(int argc, const char*const* argv)
 
     smfPipe.Close();
     listenPipe.Close();
-    return exitStatus;
+    return 0;
 }  // end SmfApp::RunControlClient()
 
 bool SmfApp::OnStartup(int argc, const char*const* argv)
@@ -1636,6 +1896,14 @@ void SmfApp::OnShutdown()
     if (control_pipe.IsOpen()) control_pipe.Close();
     if (server_pipe.IsOpen()) server_pipe.Close();
     if (underlay_group_socket.IsOpen()) underlay_group_socket.Close();
+    underlay_join_groups.Destroy();
+    if (NULL != underlay_gre_cap)
+    {
+        underlay_gre_cap->Close();
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+    }
+    underlay_gre_groups.Destroy();
 
     Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
     Smf::Interface* iface;
@@ -1885,6 +2153,13 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
     {
         PLOG(PL_DEBUG,"Setup to pull VRF data from FRR\n");
         smf.SetWithFRR(true);
+#ifdef ELASTIC_MCAST
+        // Command-line with-frr runs before OnStartup() opens the
+        // controller. A runtime --cli "with-frr" must start FRR polling
+        // on the already-open controller.
+        if (igmp_controller.IsOpen())
+            igmp_controller.EnableFrrPolling();
+#endif // ELASTIC_MCAST
         return true;
     }
     else if (!strncmp("ipv6", cmd, len))
@@ -2224,6 +2499,23 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             {
                 PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to retrieve interface name\n");
                 return false;
+            }
+            // mGRE PF_PACKET does not deliver 224.0.0.55 unless the
+            // tunnel joins it. EM_ACK/ADV/NACK all use that group.
+            if (iface->IsGRE())
+            {
+                if (!underlay_group_socket.IsOpen() && !underlay_group_socket.Open())
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: unable to open socket to join %s on %s\n",
+                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+                    return false;
+                }
+                if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
+                {
+                    PLOG(PL_ERROR, "SmfApp::OnCommand(elastic) error: join %s on %s failed\n",
+                         ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+                    return false;
+                }
             }
             ProtoAddressList groupList;
             if (!ProtoNet::GetGroupMemberships(ifaceName, ProtoAddress::IPv4, groupList))
@@ -3081,24 +3373,49 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
             return false;
         }
         addrText = tk.GetNextItem();
+        bool dynamicLearn = false;
         ProtoAddress remoteAddr;
-        if ((NULL != addrText) && !remoteAddr.ResolveFromString(addrText))
+        if ((NULL != addrText) && (0 == strcmp(addrText, "dynamic")))
+        {
+            dynamicLearn = true;
+        }
+        else if ((NULL != addrText) && !remoteAddr.ResolveFromString(addrText))
         {
             PLOG(PL_ERROR, "OnCommand(%s) error: invalid remote address \"%s\"\n", cmd, addrText);
             return false;
         }
         TRACE("mapping GRE local:%s", localAddr.GetHostString());
-        TRACE(" remote:%s\n", remoteAddr.GetHostString());
+        if (dynamicLearn)
+            TRACE(" remote:dynamic\n");
+        else
+            TRACE(" remote:%s\n", remoteAddr.GetHostString());
         if (map)
         {
-            if (remoteAddr.IsValid())
+            if (dynamicLearn)
             {
-                // It's a tunnel interface mapping
+                iface->SetTunnelLocalAddress(localAddr);
+                iface->SetTunnelLearnDynamic(true);
+                DumpLearnedTunnelNeighbors(*iface);
+            }
+            else if (remoteAddr.IsValid())
+            {
+                // Multiple map commands with different remotes record multiple
+                // inject destinations for overlay multicast (unicast peers
+                // and/or an underlay multicast group).
+                // 0.0.0.0 is the kernel wildcard remote (not a send dest).
                 iface->SetTunnelLocalAddress(localAddr);
                 iface->SetTunnelRemoteAddress(remoteAddr);
                 if (!smf.AddTunnelInfo(iface->GetIndex(), localAddr, remoteAddr))
                 {
                     PLOG(PL_ERROR, "OnCommand(%s) error: Smf::AddTunnelInfo() failed\n", cmd);
+                    return false;
+                }
+                if (remoteAddr.IsMulticast() &&
+                    GreDeviceIsUnicastMgre(*iface) &&
+                    !MaybeEnableUnderlayGreDemux(remoteAddr))
+                {
+                    PLOG(PL_ERROR, "OnCommand(%s) error: underlay GRE demux failed for %s\n",
+                         cmd, remoteAddr.GetHostString());
                     return false;
                 }
             }
@@ -3108,11 +3425,24 @@ bool SmfApp::OnCommand(const char* cmd, const char* val)
                 return false;
             }
         }
+        else if (dynamicLearn)
+        {
+            iface->SetTunnelLearnDynamic(false);
+            ClearLearnedTunnelNeighbors(*iface);
+        }
         else if (remoteAddr.IsValid())
         {
-            iface->SetTunnelLocalAddress(PROTO_ADDR_NONE);
-            iface->SetTunnelRemoteAddress(PROTO_ADDR_NONE);
             smf.RemoveTunnelInfo(localAddr, remoteAddr);
+            if (remoteAddr.IsMulticast())
+            {
+                underlay_gre_groups.Remove(remoteAddr);
+                if (underlay_gre_groups.IsEmpty() && (NULL != underlay_gre_cap))
+                {
+                    underlay_gre_cap->Close();
+                    delete underlay_gre_cap;
+                    underlay_gre_cap = NULL;
+                }
+            }
         }
         else
         {
@@ -4124,7 +4454,9 @@ bool SmfApp::JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceN
         PLOG(PL_ERROR, "SmfApp::JoinUnderlayGroup() error: group join failed!");
         return false;
     }
-    return true;
+    unsigned int ifaceIndex = ProtoNet::GetInterfaceIndex(ifaceName);
+    underlay_join_groups.Insert(groupAddr, INT2VOIDP(ifaceIndex));
+    return MaybeEnableUnderlayGreDemux(groupAddr);
 }  // end SmfApp::JoinUnderlayGroup()
 
 bool SmfApp::LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName)
@@ -4135,8 +4467,277 @@ bool SmfApp::LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* iface
         PLOG(PL_ERROR, "SmfApp::LeaveUnderlayGroup() error: group leave failed!");
         return false;
     }
+    underlay_join_groups.Remove(groupAddr);
+    underlay_gre_groups.Remove(groupAddr);
+    if (underlay_gre_groups.IsEmpty() && (NULL != underlay_gre_cap))
+    {
+        underlay_gre_cap->Close();
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+    }
     return true;
 }  // end SmfApp::LeaveUnderlayGroup()
+
+bool SmfApp::GreDeviceIsUnicastMgre(Smf::Interface& iface)
+{
+    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface.GetExtension());
+    if ((NULL == mech) || (NULL == mech->GetPrincipalElement()))
+        return false;
+    const ProtoAddress& kernRemote =
+        mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
+    if (!kernRemote.IsValid() || kernRemote.IsUnspecified())
+        return true;
+    return kernRemote.IsUnicast();
+}  // end SmfApp::GreDeviceIsUnicastMgre()
+
+bool SmfApp::MaybeEnableUnderlayGreDemux(const ProtoAddress& groupAddr)
+{
+    if (!underlay_join_groups.Contains(groupAddr))
+        return true;
+    unsigned int greIndex = smf.FindMappedIndexForRemote(groupAddr);
+    if (0 == greIndex)
+        return true;
+    Smf::Interface* greIface = smf.GetInterface(greIndex);
+    if ((NULL == greIface) || !GreDeviceIsUnicastMgre(*greIface))
+        return true;
+    unsigned int ifIndex =
+        (unsigned int)(uintptr_t)underlay_join_groups.GetUserData(groupAddr);
+    char ifaceName[Smf::IF_NAME_MAX + 1];
+    ifaceName[Smf::IF_NAME_MAX] = '\0';
+    if (0 == ProtoNet::GetInterfaceName(ifIndex, ifaceName, Smf::IF_NAME_MAX))
+    {
+        PLOG(PL_ERROR, "SmfApp::MaybeEnableUnderlayGreDemux() error: no name for ifIndex %u\n",
+             ifIndex);
+        return false;
+    }
+    return EnableUnderlayGreDemux(groupAddr, ifaceName);
+}  // end SmfApp::MaybeEnableUnderlayGreDemux()
+
+bool SmfApp::EnableUnderlayGreDemux(const ProtoAddress& groupAddr, const char* ifaceName)
+{
+    underlay_gre_groups.Insert(groupAddr);
+    if (NULL != underlay_gre_cap)
+        return true;
+    underlay_gre_cap = ProtoCap::Create();
+    if (NULL == underlay_gre_cap)
+    {
+        PLOG(PL_ERROR, "SmfApp::EnableUnderlayGreDemux() ProtoCap::Create() error\n");
+        return false;
+    }
+    underlay_gre_cap->SetListener(this, &SmfApp::OnUnderlayGreCapture);
+    underlay_gre_cap->SetNotifier(static_cast<ProtoChannel::Notifier*>(&dispatcher));
+    if (!underlay_gre_cap->Open(ifaceName))
+    {
+        PLOG(PL_ERROR, "SmfApp::EnableUnderlayGreDemux() ProtoCap::Open(%s) error\n", ifaceName);
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+        return false;
+    }
+    if (!underlay_gre_cap->StartInputNotification())
+    {
+        PLOG(PL_ERROR, "SmfApp::EnableUnderlayGreDemux() StartInputNotification() error\n");
+        underlay_gre_cap->Close();
+        delete underlay_gre_cap;
+        underlay_gre_cap = NULL;
+        return false;
+    }
+    return true;
+}  // end SmfApp::EnableUnderlayGreDemux()
+
+void SmfApp::OnUnderlayGreCapture(ProtoChannel&              theChannel,
+                                  ProtoChannel::Notification notifyType)
+{
+    if (ProtoChannel::NOTIFY_INPUT != notifyType)
+        return;
+    ProtoCap& cap = static_cast<ProtoCap&>(theChannel);
+    UINT32 alignedBuffer[BUFFER_MAX/sizeof(UINT32)];
+    UINT16* ethBuffer = ((UINT16*)(alignedBuffer + 256)) + 1;
+    const unsigned int ETHER_BYTES_MAX = (BUFFER_MAX - 256 * sizeof(UINT32) - 2);
+    for (;;)
+    {
+        unsigned int numBytes = ETHER_BYTES_MAX;
+        ProtoCap::Direction direction;
+        if (!cap.Recv((char*)ethBuffer, numBytes, &direction))
+        {
+            PLOG(PL_ERROR, "SmfApp::OnUnderlayGreCapture() ProtoCap::Recv() error\n");
+            break;
+        }
+        if (0 == numBytes)
+            break;
+        if (ProtoCap::INBOUND != direction)
+            continue;
+
+        ProtoPktETH ethPkt((UINT32*)ethBuffer, ETHER_BYTES_MAX);
+        if (!ethPkt.InitFromBuffer(numBytes) || (ProtoPktETH::IP != ethPkt.GetType()))
+            continue;
+        ProtoPktIP ipPkt;
+        if (!ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(),
+                                  ethPkt.AccessPayload(),
+                                  ethPkt.GetPayloadLength()) ||
+            (4 != ipPkt.GetVersion()))
+            continue;
+        ProtoPktIPv4 ip4(ipPkt);
+        if (ProtoPktIP::GRE != ip4.GetProtocol())
+            continue;
+        ProtoAddress dst;
+        ip4.GetDstAddr(dst);
+        if (!underlay_gre_groups.Contains(dst))
+            continue;
+
+        unsigned int ipHdrLen = ip4.GetHeaderLength();
+        unsigned int greBytes = ethPkt.GetPayloadLength();
+        if (greBytes <= ipHdrLen)
+            continue;
+        greBytes -= ipHdrLen;
+        const UINT8* grePtr = (const UINT8*)ethPkt.AccessPayload() + ipHdrLen;
+        if (greBytes < 4)
+            continue;
+        unsigned int greHdrLen = 4;
+        if (0 != (grePtr[0] & 0x80)) greHdrLen += 4;  // checksum
+        if (0 != (grePtr[0] & 0x20)) greHdrLen += 4;  // key
+        if (0 != (grePtr[0] & 0x10)) greHdrLen += 4;  // sequence
+        if (greBytes <= greHdrLen)
+            continue;
+        unsigned int innerLen = greBytes - greHdrLen;
+        const UINT8* inner = grePtr + greHdrLen;
+
+        unsigned int greIndex = smf.FindMappedIndexForRemote(dst);
+        if (0 == greIndex)
+            continue;
+        Smf::Interface* greIface = smf.GetInterface(greIndex);
+        if (NULL == greIface)
+            continue;
+        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(greIface->GetExtension());
+        if ((NULL == mech) || (NULL == mech->GetPrincipalElement()))
+            continue;
+        ProtoCap& greCap = mech->GetPrincipalElement()->GetProtoCap();
+
+        UINT8 innerCopy[FRAME_SIZE_MAX];
+        if (innerLen > FRAME_SIZE_MAX)
+            continue;
+        memcpy(innerCopy, inner, innerLen);
+        memcpy((char*)ethBuffer + 14, innerCopy, innerLen);
+        ProtoPktETH outEth;
+        outEth.InitIntoBuffer(ethBuffer, 14 + innerLen);
+        outEth.SetType(ProtoPktETH::IP);
+        outEth.SetPayloadLength(innerLen);
+        HandleInboundPacket(alignedBuffer, 14 + innerLen, greCap);
+    }
+}  // end SmfApp::OnUnderlayGreCapture()
+
+static bool NeighStateUsable(unsigned short state)
+{
+#ifdef NUD_PERMANENT
+    return (0 != (state & (NUD_PERMANENT | NUD_REACHABLE | NUD_STALE |
+                           NUD_DELAY | NUD_PROBE | NUD_NOARP)));
+#else
+    return (0 != state);
+#endif
+}
+
+bool SmfApp::OnNeighborDump(unsigned int         ifIndex,
+                            const ProtoAddress&  dst,
+                            const ProtoAddress&  lladdr,
+                            unsigned short       ndmState,
+                            void*                userData)
+{
+    SmfApp* app = static_cast<SmfApp*>(userData);
+    Smf::Interface* iface = app->smf.GetInterface(ifIndex);
+    if ((NULL == iface) || !iface->GetTunnelLearnDynamic())
+        return true;
+    app->UpdateLearnedTunnelPeer(*iface, dst, lladdr, ndmState, false);
+    return true;
+}  // end SmfApp::OnNeighborDump()
+
+void SmfApp::DumpLearnedTunnelNeighbors(Smf::Interface& iface)
+{
+    if (!ProtoNet::GetInterfaceNeighbors(iface.GetIndex(), OnNeighborDump, this))
+        PLOG(PL_WARN, "SmfApp::DumpLearnedTunnelNeighbors() warning: neighbor dump failed for %s\n",
+             iface.GetNameStr());
+}  // end SmfApp::DumpLearnedTunnelNeighbors()
+
+void SmfApp::ClearLearnedTunnelNeighbors(Smf::Interface& iface)
+{
+    const ProtoAddress& local = iface.GetTunnelLocalAddress();
+    ProtoAddress overlay;
+    ProtoAddressList::Iterator it(iface.AccessLearnedOverlays());
+    while (it.GetNextAddress(overlay))
+    {
+        const ProtoAddress* underlay =
+            static_cast<const ProtoAddress*>(iface.AccessLearnedOverlays().GetUserData(overlay));
+        if ((NULL != underlay) && local.IsValid())
+            smf.ClearTunnelSource(local, *underlay, false, true);
+    }
+    iface.ClearLearnedOverlays();
+}  // end SmfApp::ClearLearnedTunnelNeighbors()
+
+void SmfApp::UpdateLearnedTunnelPeer(Smf::Interface&     iface,
+                                     const ProtoAddress& overlay,
+                                     const ProtoAddress& underlay,
+                                     unsigned short      ndmState,
+                                     bool                deleted)
+{
+    if (!overlay.IsValid() || !overlay.IsUnicast())
+        return;
+    const ProtoAddress& local = iface.GetTunnelLocalAddress();
+    if (!local.IsValid())
+        return;
+
+    const bool usable = !deleted &&
+                        underlay.IsValid() && underlay.IsUnicast() &&
+                        !underlay.HostIsEqual(local) &&
+                        NeighStateUsable(ndmState);
+
+    ProtoAddressList& learned = iface.AccessLearnedOverlays();
+    const ProtoAddress* oldUnderlay =
+        static_cast<const ProtoAddress*>(learned.GetUserData(overlay));
+
+    if (!usable)
+    {
+        if (NULL != oldUnderlay)
+        {
+            smf.ClearTunnelSource(local, *oldUnderlay, false, true);
+            delete const_cast<ProtoAddress*>(oldUnderlay);
+            learned.Remove(overlay);
+        }
+        return;
+    }
+
+    if ((NULL != oldUnderlay) && oldUnderlay->HostIsEqual(underlay))
+        return;  // already have this mapping
+
+    if (NULL != oldUnderlay)
+    {
+        smf.ClearTunnelSource(local, *oldUnderlay, false, true);
+        delete const_cast<ProtoAddress*>(oldUnderlay);
+        learned.Remove(overlay);
+    }
+
+    ProtoAddress* stored = new ProtoAddress(underlay);
+    if (NULL == stored)
+    {
+        PLOG(PL_ERROR, "SmfApp::UpdateLearnedTunnelPeer() new ProtoAddress error: %s\n", GetErrorString());
+        return;
+    }
+    if (!learned.Insert(overlay, stored))
+    {
+        PLOG(PL_ERROR, "SmfApp::UpdateLearnedTunnelPeer() error inserting learned overlay %s\n",
+             overlay.GetHostString());
+        delete stored;
+        return;
+    }
+    if (!smf.AddTunnelInfo(iface.GetIndex(), local, underlay, false, true))
+    {
+        PLOG(PL_ERROR, "SmfApp::UpdateLearnedTunnelPeer() AddTunnelInfo() failed for %s\n",
+             underlay.GetHostString());
+        learned.Remove(overlay);
+        delete stored;
+        return;
+    }
+    PLOG(PL_DEBUG, "SmfApp::UpdateLearnedTunnelPeer() %s overlay %s",
+         iface.GetNameStr(), overlay.GetHostString());
+    PLOG(PL_DEBUG, " -> underlay %s\n", underlay.GetHostString());
+}  // end SmfApp::UpdateLearnedTunnelPeer()
 
 // This method gets (creates as needed) and configures an interface group
 Smf::InterfaceGroup* SmfApp::GetInterfaceGroup(const char*         groupName,
@@ -4471,7 +5072,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
     if (NULL == mech)
     {
-        if (NULL == (mech = new InterfaceMechanism(*iface, pkt_pool)))
+        if (NULL == (mech = new InterfaceMechanism(*iface, pkt_pool, smf)))
         {
             PLOG(PL_ERROR, "SmfApp::GetInterface(): new InterfaceMechanism error: %s\n", GetErrorString());
             smf.RemoveInterface(ifIndex);
@@ -4523,7 +5124,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
         {
             iface->SetTunnelLocalAddress(localAddr);
             iface->SetTunnelRemoteAddress(remoteAddr);
-            smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr);
+            smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr, false);
         }
         else
         {
@@ -5403,7 +6004,7 @@ Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceNameAndF
         {
             iface->SetTunnelLocalAddress(localAddr);
             iface->SetTunnelRemoteAddress(remoteAddr);
-            smf.AddTunnelInfo(vifIndex, localAddr, remoteAddr);
+            smf.AddTunnelInfo(vifIndex, localAddr, remoteAddr, false);
         }
         else
         {
@@ -5474,7 +6075,7 @@ Smf::Interface* SmfApp::CreateDevice(const char* vifName)
     }
 
     // Create InterfaceMechanism to associate vif device
-    InterfaceMechanism* mech = new InterfaceMechanism(*iface, pkt_pool);
+    InterfaceMechanism* mech = new InterfaceMechanism(*iface, pkt_pool, smf);
     if (NULL == mech)
     {
         PLOG(PL_ERROR, "SmfApp::CreateDevice() new InterfaceMechanism error: %s\n", GetErrorString());
@@ -5740,13 +6341,716 @@ bool SmfApp::AssignAddresses(const char* ifaceName, unsigned int ifaceIndex, con
     return true;
 }  // end SmfApp::AssignAddresses()
 
+bool SmfApp::ControlReply(const char* data, unsigned int numBytes)
+{
+    if (!server_pipe.IsOpen())
+    {
+        fprintf(stderr, "Server pipe is NOT open\n");
+        PLOG(PL_WARN, "SmfApp::ControlReply() server pipe is not open\n");
+        return false;
+    }
+    if (!server_pipe.Send(data, numBytes))
+    {
+        PLOG(PL_ERROR, "SmfApp::ControlReply() error sending %u byte reply\n", numBytes);
+        return false;
+    }
+    return true;
+}
+
+bool SmfApp::ControlReply(const std::string& s)
+{
+    unsigned int n = (unsigned int)s.size();
+    return ControlReply(s.c_str(), n);
+}
+
+void SmfApp::ReplyVersion(bool json)
+{
+    if (json)
+    {
+        ServerSend("jsonVersion", _SMF_VERSION);
+        return;
+    }
+    char buf[128];
+    snprintf(buf, sizeof(buf), "smf version: %s\n", _SMF_VERSION);
+    ControlReply(std::string(buf));
+}
+
+void SmfApp::ReplyStats(bool json)
+{
+    std::ostringstream ss;
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* nextIface;
+    if (json)
+    {
+        ss << "[";
+        bool comma = false;
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << (comma ? "," : "") << "{";
+            ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
+            ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
+            ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
+            ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
+            ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
+            ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
+            ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
+            ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
+            ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
+            ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
+            ss << "}";
+            comma = true;
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "Interface        Flows      Receives   MReceives  Sends      ReXmits    Forwards   Duplicates Asyms      QueueLen\n";
+        ss << "---------------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ----------\n";
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
+            ss << std::right << std::setw(10) << nextIface->GetFlowCount() << " ";
+            ss << std::setw(10) << nextIface->GetRecvCount() << " ";
+            ss << std::setw(10) << nextIface->GetMcastCount() << " ";
+            ss << std::setw(10) << nextIface->GetSentCount() << " ";
+            ss << std::setw(10) << nextIface->GetRetransmissionCount() << " ";
+            ss << std::setw(10) << nextIface->GetForwardCount() << " ";
+            ss << std::setw(10) << nextIface->GetDuplicateCount() << " ";
+            ss << std::setw(10) << nextIface->GetAsymCount() << " ";
+            ss << std::setw(10) << nextIface->GetQueueLength() << "\n";
+        }
+    }
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyInfo(bool json)
+{
+    Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+    Smf::InterfaceGroup* group;
+    std::ostringstream ss;
+    if (json)
+    {
+        bool first = true;
+        std::string spot;
+        ss << "[";
+        while (NULL != (group = grouperator.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[Smf::IF_NAME_MAX] = '\0';
+            Smf::InterfaceGroup::Iterator ifacerator(*group);
+            Smf::Interface* iface;
+
+            spot = first ? "" : ",";
+            first = false;
+            ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
+            ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
+            std::string relayType;
+            switch (group->GetRelayType())
+            {
+                case Smf::INVALID: relayType="Invalid"; break;
+                case Smf::CF: relayType="cf"; break;
+                case Smf::S_MPR: relayType="s_mpr"; break;
+                case Smf::E_CDS: relayType="e_cds"; break;
+                case Smf::MPR_CDS: relayType="mpr_cds"; break;
+                case Smf::NS_MPR: relayType="ns_mpr"; break;
+            }
+            ss << "\"RelayType\": \"" << relayType << "\",";
+            switch (group->GetForwardingMode())
+            {
+                case Smf::PUSH: relayType="Push"; break;
+                case Smf::MERGE: relayType="Merge"; break;
+                case Smf::RELAY: relayType="Relay"; break;
+            }
+            ss << "\"ForwardingMode\": \"" << relayType << "\",";
+            ss << "\"Interfaces\": [";
+            bool firstInterface = true;
+            while (NULL != (iface = ifacerator.GetNextInterface()))
+            {
+                ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+                spot = firstInterface ? "" : ",";
+                ss << spot << "\""<< ifaceName << "\"";
+                firstInterface = false;
+            }
+            ss << "]";
+            if (group->GetElasticMulticast())
+                ss << ", \"Elastic\" : true";
+            if (group->GetAdaptiveRouting())
+                ss << ", \"Adaptive\" : true";
+            ss << "}";
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "GroupName            GroupType RelayType ForwardingMode Interfaces\n";
+        ss << "-------------------- --------- --------- -------------- ----------\n";
+        while (NULL != (group = grouperator.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[Smf::IF_NAME_MAX] = '\0';
+            Smf::InterfaceGroup::Iterator ifacerator(*group);
+            Smf::Interface* iface;
+
+            ss << std::left << std::setw(21) << group->GetName();
+            ss << std::setw(9) << (group->IsTemplateGroup() ? "Template" : "Regular") << " ";
+            std::string relayType;
+            switch (group->GetRelayType())
+            {
+                case Smf::INVALID: relayType="Invalid"; break;
+                case Smf::CF: relayType="cf"; break;
+                case Smf::S_MPR: relayType="s_mpr"; break;
+                case Smf::E_CDS: relayType="e_cds"; break;
+                case Smf::MPR_CDS: relayType="mpr_cds"; break;
+                case Smf::NS_MPR: relayType="ns_mpr"; break;
+            }
+            ss << std::setw(9) << relayType << " ";
+            switch (group->GetForwardingMode())
+            {
+                case Smf::PUSH: relayType="Push"; break;
+                case Smf::MERGE: relayType="Merge"; break;
+                case Smf::RELAY: relayType="Relay"; break;
+            }
+            ss << std::setw(14) << relayType << " ";
+            bool firstInterface = true;
+            while (NULL != (iface = ifacerator.GetNextInterface()))
+            {
+                ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+                ss << ( firstInterface ? "" : ",") << ifaceName;
+                firstInterface = false;
+            }
+            if (group->GetElasticMulticast())
+                ss << ", Elastic";
+            if (group->GetAdaptiveRouting())
+                ss << ", Adaptive";
+            ss << "\n";
+        }
+        ss << "\n";
+    }
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyInterfaces(bool json)
+{
+    std::ostringstream ss;
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* nextIface;
+    if (json)
+    {
+        bool comma = false;
+        ss << "[";
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << (comma ? "," : "") << "{";
+            ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
+            ss << "\"FwdMethod\" : \"";
+#ifdef ELASTIC_MCAST
+            if (nextIface->GetElasticMulticast()) {
+                if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
+                    ss << "Advertise";
+                else
+                    ss << "Elastic";
+            } else  ss << "Flood";
+#else
+            ss << "Flood";
+#endif // ELASTIC_MCAST
+            ss << "\",";
+            ss << "\"Flags\" : \"";
+            if (nextIface->IsLayered()) ss << "L";
+            if (nextIface->IsTunnel()) ss << "T";
+            if (nextIface->IsIgmpProxy()) ss << "I";
+            InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
+            if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+#ifdef ELASTIC_MCAST
+            if (nextIface->IsManaged()) ss << "M";
+#endif // ELASTIC_MCAST
+            ss << "\"";
+#ifdef ELASTIC_MCAST
+            ss << ", \"Managed\" : " << (nextIface->IsManaged() ? "true" : "false");
+#endif // ELASTIC_MCAST
+            ss << "}";
+            comma = true;
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing";
+#ifdef ELASTIC_MCAST
+        ss << ", M = Managed";
+#endif // ELASTIC_MCAST
+        ss << "\n\n";
+        ss << "Interface        Fwd Method Flags\n";
+        ss << "---------------- ---------- -----\n";
+        while (NULL != (nextIface = iterator.GetNextItem()))
+        {
+            ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
+            ss << std::setw(12);
+#ifdef ELASTIC_MCAST
+            if (nextIface->GetElasticMulticast()) {
+                if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
+                    ss << "Advertise";
+                else
+                    ss << "Elastic";
+            } else  ss << "Flood";
+#else
+            ss << "Flood";
+#endif // ELASTIC_MCAST
+            if (nextIface->IsLayered()) ss << "L";
+            if (nextIface->IsTunnel()) ss << "T";
+            if (nextIface->IsIgmpProxy()) ss << "I";
+            InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
+            if ((NULL != mech) && mech->IsShadowing()) ss << "S";
+#ifdef ELASTIC_MCAST
+            if (nextIface->IsManaged()) ss << "M";
+#endif // ELASTIC_MCAST
+            ss << "\n";
+        }
+    }
+    ControlReply(ss.str());
+}
+
+// C = Config. Neighbor NUD letters (linux/neighbour.h) imply kernel:
+// M Permanent, N NoARP, R Reachable, S Stale, D Delay, P Probe,
+// I Incomplete, F Failed.
+static void FormatTunnelFlags(char* buf, size_t bufLen, bool fromConfig,
+                              unsigned short nudState = 0)
+{
+    size_t n = 0;
+    if (fromConfig && (n + 1 < bufLen)) buf[n++] = 'C';
+    char nud = '\0';
+    if (nudState & 0x80)      nud = 'M';
+    else if (nudState & 0x40) nud = 'N';
+    else if (nudState & 0x02) nud = 'R';
+    else if (nudState & 0x04) nud = 'S';
+    else if (nudState & 0x08) nud = 'D';
+    else if (nudState & 0x10) nud = 'P';
+    else if (nudState & 0x01) nud = 'I';
+    else if (nudState & 0x20) nud = 'F';
+    if (nud && (n + 1 < bufLen)) buf[n++] = nud;
+    if (bufLen > 0) buf[n] = '\0';
+}
+
+static bool TunnelAddrUnspecified(const ProtoAddress& addr)
+{
+    if (!addr.IsValid())
+        return true;
+    return addr.HostIsEqual(PROTO_ADDR_ANY) || addr.HostIsEqual(PROTO_ADDR_ANY6);
+}
+
+static bool SameHostAddr(const ProtoAddress& a, const ProtoAddress& b)
+{
+    return a.IsValid() && b.IsValid() && a.HostIsEqual(b);
+}
+
+static void FormatAddrOrDash(const ProtoAddress& addr, char* buf, size_t bufLen)
+{
+    if (TunnelAddrUnspecified(addr))
+        strncpy(buf, "-", bufLen);
+    else
+        addr.GetHostString(buf, bufLen);
+    buf[bufLen - 1] = '\0';
+}
+
+static void TunnelOverlayLocal(Smf::Interface* iface, ProtoAddress& overlay)
+{
+    if (NULL == iface)
+        return;
+    const ProtoAddress& ip = iface->GetIpAddress();
+    if (ip.IsValid() && (ProtoAddress::ETH != ip.GetType()))
+    {
+        overlay = ip;
+        return;
+    }
+    ProtoAddressList::Iterator it(iface->AccessAddressList());
+    ProtoAddress addr;
+    while (it.GetNextAddress(addr))
+    {
+        if ((ProtoAddress::IPv4 == addr.GetType()) || (ProtoAddress::IPv6 == addr.GetType()))
+        {
+            overlay = addr;
+            return;
+        }
+    }
+}
+
+void SmfApp::ReplyTunnel(bool json)
+{
+    std::ostringstream ss;
+    Smf::InterfaceInfoTable::Iterator it(smf.AccessInterfaceInfoTable());
+    Smf::InterfaceInfo* info;
+    if (json)
+    {
+        ss << "[";
+        bool comma = false;
+        while (NULL != (info = it.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[0] = '\0';
+            ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+            char localStr[64];
+            char remoteStr[64];
+            char overlayStr[64];
+            info->GetLocalAddress().GetHostString(localStr, sizeof(localStr));
+            FormatAddrOrDash(info->GetRemoteAddress(), remoteStr, sizeof(remoteStr));
+            ProtoAddress overlay;
+            if (info->GetRemoteAddress().IsValid())
+                TunnelOverlayLocal(smf.GetInterface(info->GetIndex()), overlay);
+            FormatAddrOrDash(overlay, overlayStr, sizeof(overlayStr));
+            char flags[8];
+            FormatTunnelFlags(flags, sizeof(flags), info->FromConfig());
+            ss << (comma ? "," : "") << "{";
+            ss << "\"Interface\":\"" << ifaceName << "\",";
+            ss << "\"Local\":\"" << localStr << "\",";
+            ss << "\"Remote\":\"" << remoteStr << "\",";
+            ss << "\"IP\":\"" << overlayStr << "\",";
+            ss << "\"Flags\":\"" << flags << "\"";
+            ss << "}";
+            comma = true;
+        }
+        ss << "]\n";
+    }
+    else
+    {
+        ss << "Flags: C = Config\n";
+        ss << "Local/Remote are underlay tunnel endpoints; IP is the local overlay address.\n\n";
+        ss << "Interface        Local            Remote           IP               Flags\n";
+        ss << "---------------- ---------------- ---------------- ---------------- -----\n";
+        while (NULL != (info = it.GetNextItem()))
+        {
+            char ifaceName[Smf::IF_NAME_MAX + 1];
+            ifaceName[0] = '\0';
+            ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
+            char localStr[64];
+            char remoteStr[64];
+            char overlayStr[64];
+            info->GetLocalAddress().GetHostString(localStr, sizeof(localStr));
+            FormatAddrOrDash(info->GetRemoteAddress(), remoteStr, sizeof(remoteStr));
+            ProtoAddress overlay;
+            if (info->GetRemoteAddress().IsValid())
+                TunnelOverlayLocal(smf.GetInterface(info->GetIndex()), overlay);
+            FormatAddrOrDash(overlay, overlayStr, sizeof(overlayStr));
+            char flags[8];
+            FormatTunnelFlags(flags, sizeof(flags), info->FromConfig());
+            ss << std::left << std::setw(16) << ifaceName << " ";
+            ss << std::setw(16) << localStr << " ";
+            ss << std::setw(16) << remoteStr << " ";
+            ss << std::setw(16) << overlayStr << " ";
+            ss << flags << "\n";
+        }
+    }
+    ControlReply(ss.str());
+}
+
+struct TunnelNeighRow
+{
+    unsigned int   ifIndex;
+    ProtoAddress   overlay_remote;   // kernel neigh dst
+    ProtoAddress   underlay_remote;  // kernel neigh lladdr / mapped GRE remote
+    unsigned short state;
+    bool           from_config;
+    bool           from_kernel;
+};
+
+struct ShowNeighDump
+{
+    std::vector<TunnelNeighRow>* rows;
+};
+
+static bool ShowNeighHandler(unsigned int         ifIndex,
+                             const ProtoAddress&  dst,
+                             const ProtoAddress&  lladdr,
+                             unsigned short       ndmState,
+                             void*                userData)
+{
+    ShowNeighDump* ctx = static_cast<ShowNeighDump*>(userData);
+    TunnelNeighRow row;
+    row.ifIndex = ifIndex;
+    row.overlay_remote = dst;
+    row.underlay_remote = lladdr;
+    row.state = ndmState;
+    row.from_config = false;
+    row.from_kernel = true;
+    ctx->rows->push_back(row);
+    return true;
+}
+
+static void MarkTunnelNeighbor(std::vector<TunnelNeighRow>& rows,
+                               unsigned int ifIndex,
+                               const ProtoAddress& peer,
+                               bool fromConfig,
+                               bool fromKernel)
+{
+    bool found = false;
+    for (size_t i = 0; i < rows.size(); i++)
+    {
+        if (rows[i].ifIndex != ifIndex)
+            continue;
+        if (SameHostAddr(rows[i].underlay_remote, peer) || SameHostAddr(rows[i].overlay_remote, peer))
+        {
+            if (fromConfig)
+                rows[i].from_config = true;
+            if (fromKernel)
+                rows[i].from_kernel = true;
+            found = true;
+        }
+    }
+    if (found)
+        return;
+    TunnelNeighRow row;
+    row.ifIndex = ifIndex;
+    row.underlay_remote = peer;
+    row.state = 0;
+    row.from_config = fromConfig;
+    row.from_kernel = fromKernel;
+    rows.push_back(row);
+}
+
+void SmfApp::ReplyTunnelNeighbors(bool json)
+{
+    std::vector<TunnelNeighRow> rows;
+    ShowNeighDump ctx;
+    ctx.rows = &rows;
+    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
+    Smf::Interface* iface;
+    while (NULL != (iface = iterator.GetNextItem()))
+    {
+        if (ProtoNet::IFACE_GRE != ProtoNet::GetInterfaceType(iface->GetIndex()))
+            continue;
+        ProtoNet::GetInterfaceNeighbors(iface->GetIndex(), ShowNeighHandler, &ctx);
+    }
+    Smf::InterfaceInfoTable::Iterator it(smf.AccessInterfaceInfoTable());
+    Smf::InterfaceInfo* info;
+    while (NULL != (info = it.GetNextItem()))
+    {
+        const ProtoAddress& remote = info->GetRemoteAddress();
+        if (TunnelAddrUnspecified(remote))
+            continue;
+        // Configured maps and kernel-learned device remotes (P2P, multicast-
+        // underlay). 0.0.0.0 is skipped above; it is not a neighbor.
+        MarkTunnelNeighbor(rows, info->GetIndex(), remote, info->FromConfig(),
+                           info->FromKernel());
+    }
+
+    std::ostringstream ss;
+    if (json)
+    {
+        ss << "[";
+    }
+    else
+    {
+        ss << "Flags: C = Config, R = Reachable, S = Stale, D = Delay, P = Probe,\n"
+           << "       I = Incomplete, F = Failed, N = NoARP, M = Permanent\n"
+           << "Neighbor IP is the peer overlay address; Remote is the peer underlay.\n\n";
+        ss << "Interface        Neighbor IP      Remote           Flags\n"
+           << "---------------- ---------------- ---------------- -----\n";
+    }
+    bool comma = false;
+    for (size_t i = 0; i < rows.size(); i++)
+    {
+        const TunnelNeighRow& row = rows[i];
+        char ifaceName[Smf::IF_NAME_MAX + 1];
+        ifaceName[0] = '\0';
+        ProtoNet::GetInterfaceName(row.ifIndex, ifaceName, Smf::IF_NAME_MAX);
+        char overlayStr[64];
+        char remoteStr[64];
+        FormatAddrOrDash(row.overlay_remote, overlayStr, sizeof(overlayStr));
+        FormatAddrOrDash(row.underlay_remote, remoteStr, sizeof(remoteStr));
+        char flags[8];
+        FormatTunnelFlags(flags, sizeof(flags), row.from_config, row.state);
+        if (json)
+        {
+            ss << (comma ? "," : "") << "{";
+            ss << "\"Interface\":\"" << ifaceName << "\",";
+            ss << "\"NeighborIP\":\"" << overlayStr << "\",";
+            ss << "\"Remote\":\"" << remoteStr << "\",";
+            ss << "\"Flags\":\"" << flags << "\"";
+            ss << "}";
+            comma = true;
+        }
+        else
+        {
+            ss << std::left << std::setw(16) << ifaceName << " ";
+            ss << std::setw(16) << overlayStr << " ";
+            ss << std::setw(16) << remoteStr << " ";
+            ss << flags << "\n";
+        }
+    }
+    if (json)
+        ss << "]\n";
+    ControlReply(ss.str());
+}
+
+#ifdef ELASTIC_MCAST
+void SmfApp::ReplyGroups(bool json, bool brief, bool details)
+{
+    std::ostringstream ss;
+    mcast_controller.DumpGroups(brief, json, ss, details);
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyGroupMemberships(bool json)
+{
+    std::ostringstream ss;
+    mcast_controller.DumpMemberships(json, ss);
+    ControlReply(ss.str());
+}
+
+void SmfApp::ReplyIgmpGroups(bool json)
+{
+    std::ostringstream ss;
+    mcast_controller.DumpManagedGroups(json, ss);
+    ControlReply(ss.str());
+}
+#endif // ELASTIC_MCAST
+
+void SmfApp::OnShowCommand(const char* arg)
+{
+    while ((NULL != arg) && isspace((unsigned char)*arg))
+        arg++;
+    if ((NULL == arg) || ('\0' == *arg) || (0 == strcmp(arg, "?")))
+    {
+        std::ostringstream ss;
+        FormatShowHelp(ss);
+        ControlReply(ss.str());
+        return;
+    }
+
+    char buf[256];
+    strncpy(buf, arg, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    const char* topic = NULL;
+    const char* sub = NULL;
+    bool json = false;
+    bool brief = false;
+    bool details = false;
+    char* p = buf;
+    while (*p)
+    {
+        while (isspace((unsigned char)*p))
+            p++;
+        if ('\0' == *p)
+            break;
+        char* start = p;
+        while ((*p != '\0') && !isspace((unsigned char)*p))
+            p++;
+        if (*p)
+            *p++ = '\0';
+        if (NULL == topic)
+        {
+            topic = start;
+        }
+        else if ((NULL == sub) && !json && !brief && !details && IsShowSubcommand(topic, start))
+        {
+            sub = start;
+        }
+        else if (0 == strcmp(start, "json"))
+        {
+            json = true;
+        }
+        else if (json)
+        {
+            ControlReply(std::string("show: 'json' must be the last modifier\n"));
+            return;
+        }
+        else if (0 == strcmp(start, "brief"))
+        {
+            brief = true;
+        }
+        else if ((0 == strcmp(start, "details")) || (0 == strcmp(start, "detail")))
+        {
+            details = true;
+        }
+        else
+        {
+            ControlReply(std::string("show: unknown modifier '") + start + "'\n");
+            return;
+        }
+    }
+
+    if (NULL == topic)
+    {
+        std::ostringstream ss;
+        FormatShowHelp(ss);
+        ControlReply(ss.str());
+        return;
+    }
+    if (brief && details)
+    {
+        ControlReply(std::string("show: 'brief' and 'details' cannot be used together\n"));
+        return;
+    }
+
+    const ShowTopicSpec* spec = FindShowTopic(topic, sub);
+    std::string cmdName = std::string("show ") + topic;
+    if (NULL != sub)
+        cmdName += std::string(" ") + sub;
+    if (NULL == spec)
+    {
+        ControlReply(cmdName + ": unknown command\n");
+        return;
+    }
+    if (json && !spec->json)
+    {
+        ControlReply(cmdName + ": 'json' is not supported\n");
+        return;
+    }
+    if (brief && !spec->brief)
+    {
+        ControlReply(cmdName + ": 'brief' is not supported\n");
+        return;
+    }
+    if (details && !spec->details)
+    {
+        ControlReply(cmdName + ": 'details' is not supported\n");
+        return;
+    }
+
+    if (0 == strcmp(topic, "version"))
+        ReplyVersion(json);
+    else if (0 == strcmp(topic, "statistics"))
+        ReplyStats(json);
+    else if ((0 == strcmp(topic, "interface")) && (NULL != sub) && (0 == strcmp(sub, "grouping")))
+        ReplyInfo(json);
+    else if (0 == strcmp(topic, "interface"))
+        ReplyInterfaces(json);
+    else if ((0 == strcmp(topic, "tunnel")) && (NULL != sub) && (0 == strcmp(sub, "neighbors")))
+        ReplyTunnelNeighbors(json);
+    else if (0 == strcmp(topic, "tunnel"))
+        ReplyTunnel(json);
+    else if ((0 == strcmp(topic, "groups")) && (NULL != sub) && (0 == strcmp(sub, "memberships")))
+    {
+#ifdef ELASTIC_MCAST
+        ReplyGroupMemberships(json);
+#else
+        ControlReply(std::string("show groups memberships is only available in elastic builds\n"));
+#endif // ELASTIC_MCAST
+    }
+    else if ((0 == strcmp(topic, "igmp")) && (NULL != sub) && (0 == strcmp(sub, "groups")))
+    {
+#ifdef ELASTIC_MCAST
+        ReplyIgmpGroups(json);
+#else
+        ControlReply(std::string("show igmp groups is only available in elastic builds\n"));
+#endif // ELASTIC_MCAST
+    }
+    else if (0 == strcmp(topic, "groups"))
+    {
+#ifdef ELASTIC_MCAST
+        // Default listing is DumpGroups(false); brief selects the shorter dump.
+        ReplyGroups(json, brief, details);
+#else
+        ControlReply(std::string("show groups is only available in elastic builds\n"));
+#endif // ELASTIC_MCAST
+    }
+}
+
 /* These are the messages that come in through the server socket
- *   "-jsonInfo",        "Returns string with group names and interfaces, json formatted to unix socket",
- *   "-jsonStats",       "Return stats for everything in json format to unix socket",
- *   "-jsonVersion",     "Return version in json format to unix socket",  Not in CLI
- *   "-ping",            "Ping/Heartbeat returns 'pong' if nrlsmf is running", // should this be for a specific group?
- *   "-stats",           "Return stats for everything  to unix socket",
- *   "-info",            "Returns string with group names and interfaces"
+ *   "show <command> [brief|details] [json]"  modern CLI status query
+ *   e.g. show statistics, show interface, show interface grouping,
+ *        show tunnel, show tunnel neighbors
+ *   legacy: jsonInfo, jsonStats, jsonVersion, ping, stats, info,
+ *           interfaces, interfacesj, groups, groupsj, brfgroups, brfgroupsj
  */
 void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
 {
@@ -5933,10 +7237,13 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                 }
                 smf.SetNeighborList(arg, argLen);
             }
+            else if (0 == strcmp(cmd, "show"))
+            {
+                OnShowCommand(arg);
+            }
             else if (!strncmp("jsonVersion", cmd, len))
             {
-                ServerSend("jsonVersion", _SMF_VERSION);
-                return;
+                ReplyVersion(true);
             }
             else if (!strncmp("ping", cmd, len)) // just checking that nrlsmf is running, don't care about anything else ...
             {
@@ -5951,9 +7258,6 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     }
                     else
                         PLOG(PL_DEBUG, "SmfApp::OnCommand(instance) sent heartbeat to smf server\n");
-
-                    // following line sends json format back, probably not needed
-                    // ServerSend("ping", "pong");
                 }
                 else
                 {
@@ -5961,332 +7265,38 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
                     PLOG(PL_WARN, "SmfApp::OnCommand(ping) warning: unable to connect to smfServer\n");
                 }
             }
-	        else if (!strncmp(cmd, "stats", cmdLen))
-	        {
-                std::ostringstream ss;
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    ss << "Interface        Flows      Receives   MReceives  Sends      ReXmits    Forwards   Duplicates Asyms      QueueLen\n";
-                    ss << "---------------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ---------- ----------\n";
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
-                        ss << std::right << std::setw(10) << nextIface->GetFlowCount() << " ";
-                        ss << std::setw(10) << nextIface->GetRecvCount() << " ";
-                        ss << std::setw(10) << nextIface->GetMcastCount() << " ";
-                        ss << std::setw(10) << nextIface->GetSentCount() << " ";
-                        ss << std::setw(10) << nextIface->GetRetransmissionCount() << " ";
-                        ss << std::setw(10) << nextIface->GetForwardCount() << " ";
-                        ss << std::setw(10) << nextIface->GetDuplicateCount() << " ";
-                        ss << std::setw(10) << nextIface->GetAsymCount() << " ";
-                        ss << std::setw(10) << nextIface->GetQueueLength() << "\n";
-                    }
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(stats) error sending stats to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is not open for stats\n");
-                    return;
-                }
-            }
-            else if (!strncmp("jsonInfo", cmd, len)) // just checking groupInfo ...
+            else if (!strncmp(cmd, "stats", cmdLen))
             {
-                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
-                Smf::InterfaceGroup* group;
-                std::ostringstream ss;
-                bool first = true;
-                std::string spot;
-                ss << "[";
-                while (NULL != (group = grouperator.GetNextItem()))
-                {
-                    char ifaceName[Smf::IF_NAME_MAX + 1];
-                    ifaceName[Smf::IF_NAME_MAX] = '\0';
-                    Smf::InterfaceGroup::Iterator ifacerator(*group);
-                    Smf::Interface* iface;
-
-                    // If we don't want to see PUSH groups, uncomment following two lines ...
-                    // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
-                    //     continue;
-                    spot = first ? "" : ",";
-                    first = false;
-                    ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
-                    ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
-                    std::string relayType;
-                    switch (group->GetRelayType())
-                    {
-                        case Smf::INVALID: relayType="Invalid"; break;
-                        case Smf::CF: relayType="cf"; break;
-                        case Smf::S_MPR: relayType="s_mpr"; break;
-                        case Smf::E_CDS: relayType="e_cds"; break;
-                        case Smf::MPR_CDS: relayType="mpr_cds"; break;
-                        case Smf::NS_MPR: relayType="ns_mpr"; break;
-                    }
-                    ss << "\"RelayType\": \"" << relayType << "\",";
-                    switch (group->GetForwardingMode())
-                    {
-                        case Smf::PUSH: relayType="Push"; break;
-                        case Smf::MERGE: relayType="Merge"; break;
-                        case Smf::RELAY: relayType="Relay"; break;
-                    }
-                    ss << "\"ForwardingMode\": \"" << relayType << "\",";
-                    ss << "\"Interfaces\": [";
-                    bool firstInterface = true;
-                    while (NULL != (iface = ifacerator.GetNextInterface()))
-                    {
-                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                        spot = firstInterface ? "" : ",";
-                        ss << spot << "\""<< ifaceName << "\"";
-                        firstInterface = false;
-                    }
-                    ss << "]";
-                    if (group->GetElasticMulticast())
-                        ss << ", \"Elastic\" : true";
-                    if (group->GetAdaptiveRouting())
-                        ss << ", \"Adaptive\" : true";
-                    ss << "}";
-                }
-                ss << "]\n";
-                if (server_pipe.IsOpen())
-                {
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(jsonInfo) error sending jsonInfo to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is NOT open\n");
-                    PLOG(PL_WARN, "SmfApp::OnCommand(jsonInfo) warning: unable to connect to smfServer\n");
-                }
+                ReplyStats(false);
             }
-            else if (!strncmp("info", cmd, len)) // just checking groupInfo ...
+            else if (!strncmp("jsonInfo", cmd, len))
             {
-                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
-                Smf::InterfaceGroup* group;
-                std::ostringstream ss;
-                ss << "";
-                ss << "GroupName            GroupType RelayType ForwardingMode Interfaces\n";
-                ss << "-------------------- --------- --------- -------------- ----------\n";
-                while (NULL != (group = grouperator.GetNextItem()))
-                {
-                    char ifaceName[Smf::IF_NAME_MAX + 1];
-                    ifaceName[Smf::IF_NAME_MAX] = '\0';
-                    Smf::InterfaceGroup::Iterator ifacerator(*group);
-                    Smf::Interface* iface;
-
-                    // If we don't want to see PUSH groups, uncomment following two lines ...
-                    // if (Smf::PUSH == group->GetForwardingMode()) // I think we want to skip these ...
-                    //     continue;
-                    ss << std::left << std::setw(21) << group->GetName();
-                    ss << std::setw(9) << (group->IsTemplateGroup() ? "Template" : "Regular") << " ";
-                    std::string relayType;
-                    switch (group->GetRelayType())
-                    {
-                        case Smf::INVALID: relayType="Invalid"; break;
-                        case Smf::CF: relayType="cf"; break;
-                        case Smf::S_MPR: relayType="s_mpr"; break;
-                        case Smf::E_CDS: relayType="e_cds"; break;
-                        case Smf::MPR_CDS: relayType="mpr_cds"; break;
-                        case Smf::NS_MPR: relayType="ns_mpr"; break;
-                    }
-                    ss << std::setw(9) << relayType << " ";
-                    switch (group->GetForwardingMode())
-                    {
-                        case Smf::PUSH: relayType="Push"; break;
-                        case Smf::MERGE: relayType="Merge"; break;
-                        case Smf::RELAY: relayType="Relay"; break;
-                    }
-                    ss << std::setw(14) << relayType << " ";
-                    bool firstInterface = true;
-                    while (NULL != (iface = ifacerator.GetNextInterface()))
-                    {
-                        ProtoNet::GetInterfaceName(iface->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
-                        ss << ( firstInterface ? "" : ",") << ifaceName;
-                        firstInterface = false;
-                    }
-                    if (group->GetElasticMulticast())
-                        ss << ", Elastic";
-                    if (group->GetAdaptiveRouting())
-                        ss << ", Adaptive";
-                    ss << "\n";
-                }
-                ss << "\n";
-                if (server_pipe.IsOpen())
-                {
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(info) error sending info to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is NOT open\n");
-                    PLOG(PL_WARN, "SmfApp::OnCommand(info) warning: unable to connect to smfServer\n");
-                }
+                ReplyInfo(true);
             }
-            else if (!strncmp("jsonStats", cmd, len)) // just checking stats ...
+            else if (!strncmp("info", cmd, len))
             {
-                std::ostringstream ss;
-                ss << "[";
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    bool comma = false;
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << (comma ? "," : "") << "{";
-                        ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
-                        ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
-                        ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
-                        ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
-                        ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
-                        ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
-                        ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
-                        ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
-                        ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
-                        ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
-                        ss << "}";
-                        comma = true;
-                    }
-                    ss << "]\n";
-                    unsigned int numBytes = ss.str().size();
-                    if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                    {
-                        PLOG(PL_ERROR, "SmfApp::OnCommand(jsonStats) error sending jsonStats to smf server\n");
-                        return;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "Server pipe is not open for stats\n");
-                    return;
-                }
+                ReplyInfo(false);
             }
-            else if (!strncmp("interfaces", cmd, len)) // checking interfaces
+            else if (!strncmp("jsonStats", cmd, len))
             {
-                std::ostringstream ss;
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    ss << "Flags: L = Layered, T = Tunnel, I = IGMP Proxy, S = Shadowing\n\n";
-                    ss << "Interface        Fwd Method Flags\n";
-                    ss << "---------------- ---------- -----\n";
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << std::left << std::setw(16) <<  nextIface->GetNameStr() << " ";
-                        ss << std::setw(12);
-#ifdef ELASTIC_MCAST
-                        if (nextIface->GetElasticMulticast()) {
-
-                            if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
-                                ss << "Advertise";
-                            else
-                                ss << "Elastic";
-                        } else  ss << "Flood";
-#else
-                        ss << "Flood";
-#endif // ELASTIC_MCAST
-
-                        std::setw(1);
-                        if (nextIface->IsLayered()) ss << "L";
-                        if (nextIface->IsTunnel()) ss << "T";
-                        if (nextIface->IsIgmpProxy()) ss << "I";
-                        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
-                        if ((NULL != mech) && mech->IsShadowing()) ss << "S";
-                        ss << "\n";
-                    }
-                }
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(interfaces) error sending interfaces to smf server\n");
-                    return;
-                }
+                ReplyStats(true);
             }
-            else if (!strncmp("interfacesj", cmd, len)) // checking interfaces
+            else if (0 == strcmp(cmd, "interfacesj"))
             {
-                std::ostringstream ss;
-                if (server_pipe.IsOpen())
-                {
-                    Smf::InterfaceList::Iterator iterator(smf.AccessInterfaceList());
-                    Smf::Interface* nextIface;
-                    bool comma = false;
-
-                    ss << "[";
-                    while (NULL != (nextIface = iterator.GetNextItem()))
-                    {
-                        ss << (comma ? "," : "") << "{";
-                        ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
-                        ss << "\"FwdMethod\" : \"";
-#ifdef ELASTIC_MCAST
-                        if (nextIface->GetElasticMulticast()) {
-                            if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
-                                ss << "Advertise";
-                            else
-                                ss << "Elastic";
-                        } else  ss << "Flood";
-#else
-                        ss << "Flood";
-#endif // ELASTIC_MCAST
-                        ss << "\",";
-
-                        ss << "\"Flags\" : \"";
-                        if (nextIface->IsLayered()) ss << "L";
-                        if (nextIface->IsTunnel()) ss << "T";
-                        if (nextIface->IsIgmpProxy()) ss << "I";
-                        InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(nextIface->GetExtension());
-                        if ((NULL != mech) && mech->IsShadowing()) ss << "S";
-                        ss << "\"}";
-                        comma = true;
-                    }
-                    ss << "]\n";
-                }
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(interfaces) error sending interfaces to smf server\n");
-                    return;
-                }
+                ReplyInterfaces(true);
+            }
+            else if (!strncmp("interfaces", cmd, len))
+            {
+                ReplyInterfaces(false);
             }
 #ifdef ELASTIC_MCAST
-            else if (!strncmp("brfgroups", cmd, len) || !strncmp("brfgroupsj", cmd, len)) // checking groups brief
+            else if (!strncmp("brfgroups", cmd, len) || !strncmp("brfgroupsj", cmd, len))
             {
-                std::ostringstream ss;
-                bool useJson = cmd[len-1] == 'j';
-
-                mcast_controller.DumpGroups(true, useJson, ss);
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(brfgroups) error sending brfgroups to smf server\n");
-                    return;
-                }
+                ReplyGroups(cmd[len-1] == 'j', true);
             }
-            else if (!strncmp("groups", cmd, len) || !strncmp("groupsj", cmd, len)) // checking stats groups
+            else if (!strncmp("groups", cmd, len) || !strncmp("groupsj", cmd, len))
             {
-                std::ostringstream ss;
-                bool useJson = cmd[len-1] == 'j';
-
-                mcast_controller.DumpGroups(false, useJson, ss);
-                unsigned int numBytes = ss.str().size();
-                if (!server_pipe.Send(ss.str().c_str(), numBytes))
-                {
-                    PLOG(PL_ERROR, "SmfApp::OnCommand(groups) error sending groups to smf server\n");
-                    return;
-                }
+                ReplyGroups(cmd[len-1] == 'j', false);
             }
 #endif // ELASTIC_MCAST
 
@@ -6921,8 +7931,8 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
             if (ProtoNet::IFACE_GRE == cap.GetInterfaceType())
             {
                 // Create placeholder Ethernet header for packet received via GRE tunnel
-                // Note the src/dst MAC addresses will be null for now
-                // Note HandleInboundPacket() will populate Ethernet src/dst header fields later as needed
+                // src/dst MAC are null here; HandleInboundPacket() sets the dest
+                // for overlay multicast from the inner IP destination.
                 ProtoPktETH ethPkt;
                 ethPkt.InitIntoBuffer(ethBuffer, 14);
                 ethPkt.SetType(ProtoPktETH::IP);
@@ -7050,6 +8060,27 @@ bool SmfApp::SendFrame(unsigned int ifaceIndex, char* frameBuffer, unsigned int 
     ASSERT(NULL != iface);
     return SendFrame(*iface, frameBuffer, frameLength);
 }  // end SmfApp::SendFrame()
+
+bool SmfApp::SendFrameTo(unsigned int ifaceIndex, char* frameBuffer, unsigned int frameLength,
+                         const ProtoAddress& dest)
+{
+    Smf::Interface* iface = smf.GetInterface(ifaceIndex);
+    if (NULL == iface)
+        return false;
+    if (!dest.IsValid() || dest.HostIsEqual(PROTO_ADDR_ANY) || dest.HostIsEqual(PROTO_ADDR_ANY6) ||
+        (ProtoAddress::ETH == dest.GetType()))
+        return SendFrame(*iface, frameBuffer, frameLength);
+
+    InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
+    if (NULL == mech)
+        return SendFrame(*iface, frameBuffer, frameLength);
+    CidElement* elem = mech->GetPrincipalElement();
+    if ((NULL == elem) || (ProtoNet::IFACE_GRE != elem->GetProtoCap().GetInterfaceType()))
+        return SendFrame(*iface, frameBuffer, frameLength);
+
+    unsigned int numBytes = frameLength;
+    return mech->SendGreToRemote(elem->GetProtoCap(), frameBuffer, frameLength, dest, numBytes);
+}  // end SmfApp::SendFrameTo()
 
 // Forward IP packet encapsulated in ETH frame using "ProtoCap" (i.e. pcap or similar) device
 bool SmfApp::SendFrame(Smf::Interface& iface, char* frameBuffer, unsigned int frameLength)
@@ -7254,8 +8285,15 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
     bool srcCapIsGRE = (ProtoNet::IFACE_GRE == srcCap.GetInterfaceType());
     if (srcCapIsGRE)
     {
-        // This will be IP instead of ETH and may be INADDR_ANY for mGRE tunnels
+        // Configured remote is INADDR_ANY for mGRE; use the per-packet
+        // GRE outer source so each neighbor has a distinct previous hop.
         prevHopAddr = srcCap.GetTunnelRemoteAddr();
+        if (TunnelAddrUnspecified(prevHopAddr))
+        {
+            const ProtoAddress& pktRemote = srcCap.GetPacketRemoteAddr();
+            if (pktRemote.IsValid() && !TunnelAddrUnspecified(pktRemote))
+                prevHopAddr = pktRemote;
+        }
         nextHopAddr = srcCap.GetTunnelLocalAddr();
     }
     else
@@ -7318,6 +8356,17 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
             return false;
         }
         if (dstAddr.IsUnicast()) isUnicast = true;
+
+        // GRE receive builds a placeholder Ethernet header with a null dest.
+        // Forwarding onto a real LAN needs the IP-mapped multicast MAC (01:00:5e:... /
+        // 33:33:...), not 00:00:00:00:00:00. ProtoCap::Forward() only rewrites src.
+        if (srcCapIsGRE && !isUnicast)
+        {
+            ProtoAddress ethDst;
+            ethDst.GetEthernetMulticastAddress(dstAddr);
+            if (ethDst.IsValid())
+                ethPkt.SetDstAddr(ethDst);
+        }
 
         // Some IGMP snooping test code (TBD - handle IPv6 too)
         bool igmpSnoop = false;
@@ -7397,12 +8446,7 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
                 // doesn't seem to be necessary to fix
                 ethPkt.SetDstAddr(vif->GetHardwareAddress());
             }
-            else
-            {
-                // Fix ETH dstMacAddr for multicast
-                dstMacAddr.GetEthernetMulticastAddress(dstAddr);
-                ethPkt.SetDstAddr(dstMacAddr);
-            }
+            // else: multicast dest already set from the GRE overlay IP dest above
         }
         else
         {
@@ -7558,6 +8602,19 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             unsigned int ifIndex = theEvent.GetInterfaceIndex();
             const char* ifName = theEvent.GetInterfaceName();
 
+            if ((ProtoNet::Monitor::Event::IFACE_NEIGH_NEW == theEvent.GetType()) ||
+                (ProtoNet::Monitor::Event::IFACE_NEIGH_DELETE == theEvent.GetType()))
+            {
+                Smf::Interface* neighIface = smf.GetInterface(ifIndex);
+                if ((NULL != neighIface) && neighIface->GetTunnelLearnDynamic())
+                {
+                    UpdateLearnedTunnelPeer(*neighIface, theEvent.GetAddress(),
+                                            theEvent.GetAuxAddress(), theEvent.GetFlags(),
+                                            ProtoNet::Monitor::Event::IFACE_NEIGH_DELETE == theEvent.GetType());
+                }
+                continue;
+            }
+
             // Is this an interface we care about?
             // a) Is it one of our interfaces?
             Smf::Interface* iface = smf.GetInterface(ifIndex);
@@ -7640,7 +8697,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                     iface->SetTunnelLocalAddress(localAddr);
                     iface->SetTunnelRemoteAddress(remoteAddr);
                     // not "remoteAddr" may be INADDR_ANY for mGRE tunnels
-                    smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr);
+                    smf.AddTunnelInfo(ifIndex, localAddr, remoteAddr, false);
                 }
                 else
                 {

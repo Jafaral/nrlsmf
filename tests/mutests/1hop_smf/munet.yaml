@@ -1,20 +1,27 @@
+# Single router bridging two host LANs.
+#
+#   h0 -- lan0 --\
+#                 r0
+#   h1 -- lan1 --/
+#
+# r0 is the router under test: all the nrlsmf forwarding-mode scenarios
+# in this directory run on r0, relaying multicast traffic between h0
+# and h1 in different ways. h0 and h1 are plain hosts, one on each side.
 topology:
- networks:
-  - name: hnet1
-  - name: hnet2
-# simple network with two hosts and one router
-# h1 <-> r1 <-> h2
- nodes:
-  - name: h1
-    kind: frr
-    connections:
-      - to: hnet1
-  - name: h2
-    kind: frr
-    connections:
-      - to: hnet2
-  - name: r1
-    kind: frr
-    connections:
-      - to: hnet1
-      - to: hnet2
+  networks:
+    - name: lan0
+    - name: lan1
+  nodes:
+    - name: h0
+      kind: frr
+      connections:
+        - to: lan0
+    - name: h1
+      kind: frr
+      connections:
+        - to: lan1
+    - name: r0
+      kind: frr
+      connections:
+        - to: lan0
+        - to: lan1
