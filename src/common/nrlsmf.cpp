@@ -6367,7 +6367,9 @@ void SmfApp::ReplyVersion(bool json)
 {
     if (json)
     {
-        ServerSend("jsonVersion", _SMF_VERSION);
+        std::ostringstream ss;
+        ss << "{\"Version\":\"" << _SMF_VERSION << "\"}\n";
+        ControlReply(ss.str());
         return;
     }
     char buf[128];
@@ -6387,16 +6389,16 @@ void SmfApp::ReplyStats(bool json)
         while (NULL != (nextIface = iterator.GetNextItem()))
         {
             ss << (comma ? "," : "") << "{";
-            ss <<  "\"interface\":\"" << nextIface->GetNameStr() << "\",";
-            ss <<  "\"flows\":\"" << nextIface->GetFlowCount() <<  "\",";
-            ss <<  "\"recv\":\"" << nextIface->GetRecvCount() <<  "\",";
-            ss <<  "\"mrcv\":\"" << nextIface->GetMcastCount() << "\",";
-            ss <<  "\"sent\":\"" << nextIface->GetSentCount() << "\",";
-            ss <<  "\"retr\":\"" << nextIface->GetRetransmissionCount() << "\",";
-            ss <<  "\"fwd\":\"" << nextIface->GetForwardCount() <<  "\",";
-            ss <<  "\"dups\":\"" << nextIface->GetDuplicateCount() << "\",";
-            ss <<  "\"asym\":\"" << nextIface->GetAsymCount() << "\",";
-            ss <<  "\"queue\":\"" << nextIface->GetQueueLength() << "\"";
+            ss << "\"Interface\":\"" << nextIface->GetNameStr() << "\",";
+            ss << "\"flows\":" << nextIface->GetFlowCount() << ",";
+            ss << "\"recv\":" << nextIface->GetRecvCount() << ",";
+            ss << "\"mrcv\":" << nextIface->GetMcastCount() << ",";
+            ss << "\"sent\":" << nextIface->GetSentCount() << ",";
+            ss << "\"retr\":" << nextIface->GetRetransmissionCount() << ",";
+            ss << "\"fwd\":" << nextIface->GetForwardCount() << ",";
+            ss << "\"dups\":" << nextIface->GetDuplicateCount() << ",";
+            ss << "\"asym\":" << nextIface->GetAsymCount() << ",";
+            ss << "\"queue\":" << nextIface->GetQueueLength();
             ss << "}";
             comma = true;
         }
@@ -6442,8 +6444,8 @@ void SmfApp::ReplyInfo(bool json)
 
             spot = first ? "" : ",";
             first = false;
-            ss << spot << "{\"GroupName\": \"" << group->GetName() << "\",";
-            ss << "\"GroupType\": \"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
+            ss << spot << "{\"GroupName\":\"" << group->GetName() << "\",";
+            ss << "\"GroupType\":\"" << (group->IsTemplateGroup() ? "Template" : "Regular") << "\",";
             std::string relayType;
             switch (group->GetRelayType())
             {
@@ -6454,15 +6456,15 @@ void SmfApp::ReplyInfo(bool json)
                 case Smf::MPR_CDS: relayType="mpr_cds"; break;
                 case Smf::NS_MPR: relayType="ns_mpr"; break;
             }
-            ss << "\"RelayType\": \"" << relayType << "\",";
+            ss << "\"RelayType\":\"" << relayType << "\",";
             switch (group->GetForwardingMode())
             {
                 case Smf::PUSH: relayType="Push"; break;
                 case Smf::MERGE: relayType="Merge"; break;
                 case Smf::RELAY: relayType="Relay"; break;
             }
-            ss << "\"ForwardingMode\": \"" << relayType << "\",";
-            ss << "\"Interfaces\": [";
+            ss << "\"ForwardingMode\":\"" << relayType << "\",";
+            ss << "\"Interfaces\":[";
             bool firstInterface = true;
             while (NULL != (iface = ifacerator.GetNextInterface()))
             {
@@ -6473,9 +6475,9 @@ void SmfApp::ReplyInfo(bool json)
             }
             ss << "]";
             if (group->GetElasticMulticast())
-                ss << ", \"Elastic\" : true";
+                ss << ",\"Elastic\":true";
             if (group->GetAdaptiveRouting())
-                ss << ", \"Adaptive\" : true";
+                ss << ",\"Adaptive\":true";
             ss << "}";
         }
         ss << "]\n";
@@ -6541,8 +6543,8 @@ void SmfApp::ReplyInterfaces(bool json)
         while (NULL != (nextIface = iterator.GetNextItem()))
         {
             ss << (comma ? "," : "") << "{";
-            ss << "\"Interface\" : \"" <<  nextIface->GetNameStr()  << "\",";
-            ss << "\"FwdMethod\" : \"";
+            ss << "\"Interface\":\"" <<  nextIface->GetNameStr()  << "\",";
+            ss << "\"FwdMethod\":\"";
 #ifdef ELASTIC_MCAST
             if (nextIface->GetElasticMulticast()) {
                 if (mcast_controller.GetDefaultForwardingStatus() ==  MulticastFIB::HYBRID)
@@ -6554,7 +6556,7 @@ void SmfApp::ReplyInterfaces(bool json)
             ss << "Flood";
 #endif // ELASTIC_MCAST
             ss << "\",";
-            ss << "\"Flags\" : \"";
+            ss << "\"Flags\":\"";
             if (nextIface->IsLayered()) ss << "L";
             if (nextIface->IsTunnel()) ss << "T";
             if (nextIface->IsIgmpProxy()) ss << "I";
@@ -6565,7 +6567,7 @@ void SmfApp::ReplyInterfaces(bool json)
 #endif // ELASTIC_MCAST
             ss << "\"";
 #ifdef ELASTIC_MCAST
-            ss << ", \"Managed\" : " << (nextIface->IsManaged() ? "true" : "false");
+            ss << ",\"Managed\":" << (nextIface->IsManaged() ? "true" : "false");
 #endif // ELASTIC_MCAST
             ss << "}";
             comma = true;
@@ -7258,7 +7260,8 @@ void SmfApp::OnControlMsg(ProtoSocket& thePipe, ProtoSocket::Event theEvent)
             }
             else if (!strncmp("jsonVersion", cmd, len))
             {
-                ReplyVersion(true);
+                // Legacy key; show version json uses "Version".
+                ServerSend("jsonVersion", _SMF_VERSION);
             }
             else if (!strncmp("ping", cmd, len)) // just checking that nrlsmf is running, don't care about anything else ...
             {

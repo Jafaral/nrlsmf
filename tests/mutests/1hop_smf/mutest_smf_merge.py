@@ -105,7 +105,7 @@ test_step(isinstance(neighbors, list) and len(neighbors) == 0,
 wait_step(
     "r0",
     'nrlsmf --cli -c "show version json" -c "show statistics json"',
-    match="jsonVersion",
+    match="Version",
     desc="nrlsmf --cli multiple -c commands (json)",
     timeout=10,
 )
