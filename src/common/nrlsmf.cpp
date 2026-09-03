@@ -1305,6 +1305,89 @@ static const struct ShowTopicSpec
     { NULL, NULL, NULL, false, false, false, false }
 };
 
+enum ShowMatch
+{
+    SHOW_MATCH_NONE,
+    SHOW_MATCH_UNIQUE,
+    SHOW_MATCH_AMBIGUOUS
+};
+
+static bool ShowTokenMatches(const char* token, const char* name)
+{
+    if ((NULL == token) || (NULL == name) || ('\0' == *token))
+        return false;
+    size_t tlen = strlen(token);
+    size_t nlen = strlen(name);
+    if (tlen > nlen)
+        return false;
+    return (0 == strncmp(token, name, tlen));
+}
+
+// Unique prefix among distinct topic names. Exact match wins.
+static ShowMatch MatchShowTopicName(const char* token, const char** canonical)
+{
+    if (NULL != canonical)
+        *canonical = NULL;
+    if ((NULL == token) || ('\0' == *token))
+        return SHOW_MATCH_NONE;
+    const char* found = NULL;
+    size_t tlen = strlen(token);
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        const char* name = kShowTopics[i].name;
+        if (!ShowTokenMatches(token, name))
+            continue;
+        if (tlen == strlen(name))
+        {
+            if (NULL != canonical)
+                *canonical = name;
+            return SHOW_MATCH_UNIQUE;
+        }
+        if ((NULL != found) && (0 != strcmp(found, name)))
+            return SHOW_MATCH_AMBIGUOUS;
+        found = name;
+    }
+    if (NULL == found)
+        return SHOW_MATCH_NONE;
+    if (NULL != canonical)
+        *canonical = found;
+    return SHOW_MATCH_UNIQUE;
+}
+
+static ShowMatch MatchShowSub(const char* topicName, const char* token, const char** canonical)
+{
+    if (NULL != canonical)
+        *canonical = NULL;
+    if ((NULL == topicName) || (NULL == token) || ('\0' == *token))
+        return SHOW_MATCH_NONE;
+    const char* found = NULL;
+    size_t tlen = strlen(token);
+    for (unsigned int i = 0; NULL != kShowTopics[i].name; i++)
+    {
+        if (0 != strcmp(topicName, kShowTopics[i].name))
+            continue;
+        const char* sub = kShowTopics[i].sub;
+        if (NULL == sub)
+            continue;
+        if (!ShowTokenMatches(token, sub))
+            continue;
+        if (tlen == strlen(sub))
+        {
+            if (NULL != canonical)
+                *canonical = sub;
+            return SHOW_MATCH_UNIQUE;
+        }
+        if ((NULL != found) && (0 != strcmp(found, sub)))
+            return SHOW_MATCH_AMBIGUOUS;
+        found = sub;
+    }
+    if (NULL == found)
+        return SHOW_MATCH_NONE;
+    if (NULL != canonical)
+        *canonical = found;
+    return SHOW_MATCH_UNIQUE;
+}
+
 static const ShowTopicSpec* FindShowTopic(const char* name, const char* sub)
 {
     if (NULL == name)
@@ -1328,7 +1411,13 @@ static const ShowTopicSpec* FindShowTopic(const char* name, const char* sub)
 
 static bool IsShowSubcommand(const char* name, const char* word)
 {
-    return (NULL != FindShowTopic(name, word));
+    const char* canonical = NULL;
+    return (SHOW_MATCH_UNIQUE == MatchShowSub(name, word, &canonical));
+}
+
+static bool MatchShowModifier(const char* token, const char* name)
+{
+    return ShowTokenMatches(token, name);
 }
 
 static void FormatShowMods(std::ostringstream& ss, const ShowTopicSpec& topic)
@@ -1359,6 +1448,9 @@ static void FormatShowHelp(std::ostringstream& ss)
         ss << "\n";
     }
     ss << "\n"
+       << "Commands, subcommands, and modifiers may be abbreviated if unique\n"
+       << "(for example \"show ver\" or \"show int grouping\").\n"
+       << "\n"
        << "Modifiers are optional and command-specific. json, when used, is last:\n"
        << "  brief     less output than the default listing\n"
        << "  details   more output than the default listing\n"
@@ -6955,13 +7047,27 @@ void SmfApp::OnShowCommand(const char* arg)
             *p++ = '\0';
         if (NULL == topic)
         {
-            topic = start;
+            const char* canonical = NULL;
+            ShowMatch match = MatchShowTopicName(start, &canonical);
+            if (SHOW_MATCH_NONE == match)
+            {
+                ControlReply(std::string("show: unknown command '") + start + "'\n");
+                return;
+            }
+            if (SHOW_MATCH_AMBIGUOUS == match)
+            {
+                ControlReply(std::string("show: ambiguous command '") + start + "'\n");
+                return;
+            }
+            topic = canonical;
         }
         else if ((NULL == sub) && !json && !brief && !details && IsShowSubcommand(topic, start))
         {
-            sub = start;
+            const char* canonical = NULL;
+            MatchShowSub(topic, start, &canonical);
+            sub = canonical;
         }
-        else if (0 == strcmp(start, "json"))
+        else if (MatchShowModifier(start, "json"))
         {
             json = true;
         }
@@ -6970,11 +7076,11 @@ void SmfApp::OnShowCommand(const char* arg)
             ControlReply(std::string("show: 'json' must be the last modifier\n"));
             return;
         }
-        else if (0 == strcmp(start, "brief"))
+        else if (MatchShowModifier(start, "brief"))
         {
             brief = true;
         }
-        else if ((0 == strcmp(start, "details")) || (0 == strcmp(start, "detail")))
+        else if (MatchShowModifier(start, "details"))
         {
             details = true;
         }
