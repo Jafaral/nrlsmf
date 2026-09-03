@@ -6673,6 +6673,13 @@ static void TunnelOverlayLocal(Smf::Interface* iface, ProtoAddress& overlay)
     }
 }
 
+// iface_info_table also holds every local MAC/IP (AddOwnAddress). Tunnel
+// rows are only those added by map, kernel GRE attributes, or dynamic neigh.
+static bool IsTunnelEndpointInfo(const Smf::InterfaceInfo& info)
+{
+    return info.FromConfig() || info.FromKernel() || info.IsLearned();
+}
+
 void SmfApp::ReplyTunnel(bool json)
 {
     std::ostringstream ss;
@@ -6684,6 +6691,8 @@ void SmfApp::ReplyTunnel(bool json)
         bool comma = false;
         while (NULL != (info = it.GetNextItem()))
         {
+            if (!IsTunnelEndpointInfo(*info))
+                continue;
             char ifaceName[Smf::IF_NAME_MAX + 1];
             ifaceName[0] = '\0';
             ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
@@ -6717,6 +6726,8 @@ void SmfApp::ReplyTunnel(bool json)
         ss << "---------------- ---------------- ---------------- ---------------- -----\n";
         while (NULL != (info = it.GetNextItem()))
         {
+            if (!IsTunnelEndpointInfo(*info))
+                continue;
             char ifaceName[Smf::IF_NAME_MAX + 1];
             ifaceName[0] = '\0';
             ProtoNet::GetInterfaceName(info->GetIndex(), ifaceName, Smf::IF_NAME_MAX);
@@ -6824,6 +6835,10 @@ void SmfApp::ReplyTunnelNeighbors(bool json)
     {
         const ProtoAddress& remote = info->GetRemoteAddress();
         if (TunnelAddrUnspecified(remote))
+            continue;
+        if (ProtoNet::IFACE_GRE != ProtoNet::GetInterfaceType(info->GetIndex()))
+            continue;
+        if (!IsTunnelEndpointInfo(*info))
             continue;
         // Configured maps and kernel-learned device remotes (P2P, multicast-
         // underlay). 0.0.0.0 is skipped above; it is not a neighbor.

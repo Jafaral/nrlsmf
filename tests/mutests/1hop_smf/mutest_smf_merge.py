@@ -97,7 +97,8 @@ section("nrlsmf --cli show commands (json)")
 
 check_common_show("r0", group_name="merge", ifaces=("eth0", "eth1"))
 tunnels = show_json("r0", "show tunnel")
-test_step(isinstance(tunnels, list), "r0 show tunnel json is a list", target="r0")
+test_step(isinstance(tunnels, list) and len(tunnels) == 0,
+          "r0 show tunnel json is empty (no GRE mappings)", target="r0")
 neighbors = show_json("r0", "show tunnel neighbors")
 test_step(isinstance(neighbors, list) and len(neighbors) == 0,
           "r0 show tunnel neighbors json is empty (no GRE)", target="r0")
