@@ -6604,6 +6604,10 @@ void SmfApp::ReplyInfo(bool json)
                 case Smf::MERGE: relayType="Merge"; break;
                 case Smf::RELAY: relayType="Relay"; break;
             }
+            if (group->GetElasticMulticast())
+                relayType += ", Elastic";
+            if (group->GetAdaptiveRouting())
+                relayType += ", Adaptive";
             ss << std::setw(14) << relayType << " ";
             bool firstInterface = true;
             while (NULL != (iface = ifacerator.GetNextInterface()))
@@ -6612,10 +6616,6 @@ void SmfApp::ReplyInfo(bool json)
                 ss << ( firstInterface ? "" : ",") << ifaceName;
                 firstInterface = false;
             }
-            if (group->GetElasticMulticast())
-                ss << ", Elastic";
-            if (group->GetAdaptiveRouting())
-                ss << ", Adaptive";
             ss << "\n";
         }
         ss << "\n";
