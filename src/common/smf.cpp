@@ -2267,7 +2267,14 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 #ifdef ELASTIC_MCAST
         // yyy - change to use IsElastic() method
         bool elastic = ifaceGroup.GetElasticMulticast() || dstIface.GetElasticMulticast();
-        if (!elastic && mcast_controller->HasPolicies())
+        // Link-local multicast on a tunnel is forwarded with the relay
+        // decision. Elastic flow control is for other multicast.
+        // 224.0.0.55 is handled before this loop. Duplicate detection
+        // below still applies.
+        bool linkLocalControl = is_tunnel && dstIp.IsMulticast() && dstIp.IsLinkLocal();
+        // Link-local traffic skips UpdateElasticRouting(), which is where
+        // elastic groups apply DENY, so check policies here for it too.
+        if ((!elastic || linkLocalControl) && mcast_controller->HasPolicies())
         {
             // Check for matching fibEntry to get "default forwarding status".  This is used to
             // check if there is a DENY policy for the given flow.  Note that currently, the ligher-weight
@@ -2547,7 +2554,7 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             // Don't forward unicast packets destined to self
             ifaceForward = false;
         }
-        if (elastic)  // note 'elastic' can only be true for non-duplicate packets
+        if (elastic && !linkLocalControl)  // elastic is true only for non-duplicates
         {
             if (NULL == fibEntry)
             {
@@ -2864,7 +2871,10 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
             if (GetDebugLevel() >= PL_DEBUG)
             {
                 PLOG(PL_DEBUG, "Smf::ProcessPacket(): sent NACK in response to data packet from %s for flow: ", upstreamHistory->GetAddress().GetHostString());
-                fibEntry->GetFlowDescription().Print();
+                // fibEntry is NULL when no elastic or policy lookup ran
+                // (e.g. link-local multicast on a tunnel).
+                if (NULL != fibEntry)
+                    fibEntry->GetFlowDescription().Print();
                 PLOG(PL_ALWAYS, "\n");
             }
         }
