@@ -51,6 +51,18 @@ e.g. a MANET island (static NBMA), gatewayed through a DMVPN-style WAN
 an SDN-managed segment (external/metadata GRE) — and proves one
 multicast flow can cross all of them.
 
+## Elastic acknowledgements
+
+`mutest_chained_elastic_ack.py` runs the same network with `elastic` and
+checks, cloud by cloud, that every elastic acknowledgement goes to that
+cloud's relay: B -> A, B2 -> B and C -> B2 (the NHRP hub, not B), C2/D -> C
+(sent to the underlay group, applied only by C), E -> D, F -> E. It checks
+the GRE destination and the named relay on the wire at each underlay router,
+the selected upstream on each acknowledging router, and FORWARD with the
+right downstream relays on each relay. It repeats with
+`NRLSMF_TEST_CAPTURE_INNER_SRC=1` (packet capture reports the inner IP
+source, as some kernels do). Both tests share `chained_build.py`.
+
 ## Run
 
 From `tests/mutests` (requires root, FRR with `nhrpd` enabled, `nrlsmf`
