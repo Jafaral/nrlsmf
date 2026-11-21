@@ -11,6 +11,10 @@
 #include "protoPktIP.h"
 #include "protoNet.h"
 #include <random>
+#ifndef WIN32
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#endif // !WIN32
 
 
 const unsigned int Smf::DEFAULT_AGE_MAX = 10;  // 10 seconds
@@ -80,6 +84,9 @@ Smf::Interface::Interface(unsigned int ifIndex, const char *ifName)
    mrcv_count(0), dups_count(0), asym_count(0), fwd_count(0), extension(NULL)
 {
     tunnel_learn_dynamic = false;
+    kernel_gre = false;
+    gre_multipoint = false;
+    gre_group_remote = false;
 }
 
 Smf::Interface::~Interface()
@@ -133,6 +140,7 @@ void Smf::Interface::Destroy()
     // Destroy our target list
     assoc_target_list.Destroy();
     ClearLearnedOverlays();
+    tunnel_neighbors.Destroy();
 
 }  // end Smf::Interface::Destroy()
 
@@ -148,6 +156,27 @@ void Smf::Interface::ClearLearnedOverlays()
     }
     learned_overlays.Destroy();
 }  // end Smf::Interface::ClearLearnedOverlays()
+
+void Smf::Interface::NoteTunnelNeighbor(const ProtoAddress& underlay)
+{
+    if (!underlay.IsValid() || !underlay.IsUnicast() ||
+        (ProtoAddress::ETH == underlay.GetType()))
+        return;
+    if (!tunnel_neighbors.Contains(underlay))
+    {
+        if (!tunnel_neighbors.Insert(underlay))
+            PLOG(PL_ERROR, "Smf::Interface::NoteTunnelNeighbor() error: insert %s failed\n",
+                 underlay.GetHostString());
+        else
+            PLOG(PL_DEBUG, "Smf::Interface::NoteTunnelNeighbor() %s: GRE neighbor %s\n",
+                 GetNameStr(), underlay.GetHostString());
+    }
+}  // end Smf::Interface::NoteTunnelNeighbor()
+
+bool Smf::Interface::IsTunnelNeighbor(const ProtoAddress& underlay) const
+{
+    return underlay.IsValid() && tunnel_neighbors.Contains(underlay);
+}  // end Smf::Interface::IsTunnelNeighbor()
 
 bool Smf::Interface::AddAssociate(InterfaceGroup& ifaceGroup, Interface& iface)
 {
@@ -1360,6 +1389,12 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                                     upstreamIndex = FindTunnelIndex(srcIp, upstreamAddr);
                                                     if (0 != upstreamIndex)
                                                         upstreamIface = GetInterface(upstreamIndex);
+                                                    // The sender named no relay, so every
+                                                    // neighbor gets this. Apply it only where
+                                                    // the flow is relayed onto the tunnel.
+                                                    if ((NULL != upstreamIface) &&
+                                                        !RelaysFlowOnto(elasticAck, *upstreamIface))
+                                                        upstreamIface = NULL;
                                                     if (NULL != upstreamIface)
                                                     {
                                                         PLOG(PL_DEBUG, "Smf::ProcessPacket() EM_ACK mapped to mGRE interface '%s'\n",
@@ -1399,10 +1434,17 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
                                             // else // else not for me
                                         }
                                     } // end for (UINT8 i = 0; i < upstreamCount
-                                    // mGRE unicast ACK: arrived on this tunnel and mapping
-                                    // missed (no local endpoint match). The GRE dest already
-                                    // selected this node, so apply the ACK to srcIface.
-                                    if ((NULL == upstreamIface) && srcIface.IsGRE())
+                                    // ACK arrived on a GRE device and matched no tunnel local
+                                    // or interface address above. A GRE ACK can reach every
+                                    // neighbor on the tunnel (multicast-group remote, or a
+                                    // sender that could not resolve its relay), so apply it
+                                    // here only when it names this host (an address on any of
+                                    // its interfaces: an external GRE device may have no
+                                    // mapped tunnel local), or names no relay and this host
+                                    // forwards the flow onto the tunnel.
+                                    if ((NULL == upstreamIface) &&
+                                        (srcIface.IsGRE() || srcIface.IsKernelGre()) &&
+                                        AckNamesThisHost(elasticAck, srcIface))
                                         mcast_controller->HandleAck(elasticAck, &srcIface, srcIp, prevHopAddr);
                                     break;
                                 }
@@ -2859,6 +2901,114 @@ int Smf::ProcessPacket(ProtoPktIP&         ipPkt,          // input/output - the
 
 #ifdef ELASTIC_MCAST
 
+// True if addr is assigned to any interface on this host, including
+// interfaces nrlsmf does not manage (such as a GRE underlay).
+static bool IsHostAddress(const ProtoAddress& addr)
+{
+#ifndef WIN32
+    struct ifaddrs* ifap = NULL;
+    if (0 != getifaddrs(&ifap))
+        return false;
+    bool found = false;
+    for (struct ifaddrs* ifa = ifap; (NULL != ifa) && !found; ifa = ifa->ifa_next)
+    {
+        if (NULL == ifa->ifa_addr)
+            continue;
+        ProtoAddress local;
+        if ((AF_INET == ifa->ifa_addr->sa_family) && (ProtoAddress::IPv4 == addr.GetType()))
+            local.SetRawHostAddress(ProtoAddress::IPv4,
+                (const char*)&((struct sockaddr_in*)ifa->ifa_addr)->sin_addr, 4);
+        else if ((AF_INET6 == ifa->ifa_addr->sa_family) && (ProtoAddress::IPv6 == addr.GetType()))
+            local.SetRawHostAddress(ProtoAddress::IPv6,
+                (const char*)&((struct sockaddr_in6*)ifa->ifa_addr)->sin6_addr, 16);
+        else
+            continue;
+        found = local.HostIsEqual(addr);
+    }
+    freeifaddrs(ifap);
+    return found;
+#else
+    return false;
+#endif // !WIN32
+}
+
+bool Smf::AckNamesThisHost(const ElasticAck& ack, Interface& ackIface)
+{
+    UINT8 count = ack.GetUpstreamListLength();
+    if (0 == count)
+        return RelaysFlowOnto(ack, ackIface);
+    ProtoAddress upstreamAddr;
+    for (UINT8 i = 0; i < count; i++)
+    {
+        if (!ack.GetUpstreamAddr(i, upstreamAddr))
+            continue;
+        if (ProtoAddress::ETH == upstreamAddr.GetType())
+            continue;
+        if (upstreamAddr.HostIsEqual(PROTO_ADDR_ANY) ||
+            upstreamAddr.HostIsEqual(PROTO_ADDR_ANY6))
+            return RelaysFlowOnto(ack, ackIface);
+        if (IsOwnAddress(upstreamAddr) || IsHostAddress(upstreamAddr))
+            return true;
+    }
+    return false;
+}  // end Smf::AckNamesThisHost()
+
+bool Smf::RelaysFlowOnto(const ElasticAck& ack, Interface& iface)
+{
+    // An EM_ACK that names no relay reaches every neighbor on a GRE
+    // tunnel. Only a node that forwards the flow onto that tunnel can be
+    // its relay there. A node that receives the flow from this same tunnel is
+    // downstream like the sender, and applying the EM_ACK would make it
+    // claim downstream members it does not have.
+    ProtoAddress dstIp, srcIp;
+    if (!ack.GetDstAddr(dstIp) || !ack.GetSrcAddr(srcIp))
+        return false;
+    ProtoFlow::Description flowDescription(dstIp, srcIp, ack.GetTrafficClass(), ack.GetProtocol());
+    MulticastFIB::Entry* entry = mcast_fib.FindEntry(flowDescription);
+    if (NULL == entry)
+        return false;
+    // A relay sends the flow onto iface (it has an outbound bucket there)
+    // and receives it on some other interface. A node with any upstream
+    // relay on iface receives the flow from this tunnel. With no upstream
+    // relay recorded yet (the flow was just detected), it is not known
+    // to be a relay: the EM_ACK repeats, so a later one applies.
+    if (NULL == entry->AccessBucketList().FindBucket(iface.GetIndex()))
+        return false;
+    bool otherIface = false;
+    MulticastFIB::UpstreamRelayList::Iterator uperator(entry->AccessUpstreamRelayList());
+    MulticastFIB::UpstreamRelay* relay;
+    while (NULL != (relay = uperator.GetNextItem()))
+    {
+        if (relay->GetInterfaceIndex() == iface.GetIndex())
+            return false;
+        otherIface = true;
+    }
+    return otherIface;
+}  // end Smf::RelaysFlowOnto()
+
+// Relay address for an elastic update. On GRE the previous hop is the
+// tunnel neighbor. UMP carries the forwarding source, which may be the
+// origin rather than that neighbor.
+static const ProtoAddress& TunnelElasticRelay(const Smf::Interface& iface,
+                                              const ProtoAddress& prevHopAddr,
+                                              MulticastFIB::UpstreamHistory* upstreamHistory)
+{
+    const bool gre = iface.IsGRE() || iface.IsKernelGre();
+    const bool prevHopUsable = prevHopAddr.IsValid() &&
+        !prevHopAddr.HostIsEqual(PROTO_ADDR_ANY) &&
+        !prevHopAddr.HostIsEqual(PROTO_ADDR_ANY6);
+    if (gre && prevHopUsable)
+        return prevHopAddr;
+    if (NULL != upstreamHistory)
+        return upstreamHistory->GetAddress();
+    return prevHopAddr;
+}
+
+static bool SameRelay(const ProtoAddress& a, const ProtoAddress& b)
+{
+    return a.IsValid() && b.IsValid() && a.HostIsEqual(b);
+}
+
 MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   currentTick,
                                                const ProtoFlow::Description&  flowDescription,
                                                Interface&                     srcIface,
@@ -2922,7 +3072,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
     bool updateController = false;
     bool sendAck = false;
     bool deny = false;
-    const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : prevHopAddr;
+    // On GRE, use the tunnel previous hop rather than the UMP source.
+    const ProtoAddress& relayAddr = TunnelElasticRelay(srcIface, prevHopAddr, upstreamHistory);
     if (NULL == fibEntry)
     {
         // This is a newly-detected flow, so we need to alert control plane!!!!!
@@ -3101,7 +3252,8 @@ MulticastFIB::Entry* Smf::UpdateElasticRouting(unsigned int                   cu
             }
         }
         // Make sure the "best upstream relay" has the most recent metric/link quality for this upstream
-        if (NULL != upstreamHistory)
+        if ((NULL != upstreamHistory) &&
+            SameRelay(upstreamHistory->GetAddress(), relayAddr))
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         if (dataTTL >= 0)
             upstreamRelay->NoteDataTTL((UINT8)dataTTL);
@@ -3232,7 +3384,7 @@ void Smf::HandleAdv(unsigned int                    currentTick,
     memcpy(pktId + advIp.GetLength(), &advId, 2);
     pktIdSize = (advIp.GetLength() + 2) * 8;
 
-    const ProtoAddress& relayAddr = (NULL != upstreamHistory) ? upstreamHistory->GetAddress() : prevHopAddr;
+    const ProtoAddress& relayAddr = TunnelElasticRelay(srcIface, prevHopAddr, upstreamHistory);
 
     if (srcIface.IsDuplicatePkt(current_update_time, flowId, flowIdSize, pktId, pktIdSize))
     {
@@ -3257,7 +3409,8 @@ void Smf::HandleAdv(unsigned int                    currentTick,
         //upstreamRelay->SetAdvMetric(elasticAdv.GetMetric());
         //upstreamRelay->SetAdvTTL(elasticAdv.GetTTL());
         //upstreamRelay->SetAdvHopCount(elasticAdv.GetHopCount());
-if (NULL != upstreamHistory)
+        if ((NULL != upstreamHistory) &&
+            SameRelay(upstreamHistory->GetAddress(), relayAddr))
             upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         return;  // do nothing else, this is a duplicate EM_ADV message
     }
@@ -3274,7 +3427,8 @@ if (NULL != upstreamHistory)
             PLOG(PL_DEBUG, "Smf::HandleAdv() saving EM_ADV info id:%hu metric:%lf for relay: %s\n",
                             advId, elasticAdv.GetMetric(), upstreamRelay->GetAddress().GetHostString());
             upstreamRelay->UpdateAdvertisementState(currentTick, advIp, elasticAdv.GetId(),  &elasticAdv);
-            if (NULL != upstreamHistory)
+            if ((NULL != upstreamHistory) &&
+                SameRelay(upstreamHistory->GetAddress(), relayAddr))
                 upstreamRelay->SetLinkQuality(upstreamHistory->GetLinkQuality());
         }
         else
@@ -3519,6 +3673,70 @@ bool Smf::FindOverlayForUnderlay(unsigned int ifaceIndex, const ProtoAddress& un
     return ctx.found;
 }
 
+namespace {
+struct UnderlayNeighCtx
+{
+    const ProtoAddress* overlay;
+    ProtoAddress*       underlay;
+    bool                found;
+};
+
+bool UnderlayNeighHandler(unsigned int        /*ifIndex*/,
+                          const ProtoAddress& dst,
+                          const ProtoAddress& lladdr,
+                          unsigned short      /*ndmState*/,
+                          void*               userData)
+{
+    UnderlayNeighCtx* ctx = static_cast<UnderlayNeighCtx*>(userData);
+    if ((NULL == ctx) || ctx->found)
+        return false;
+    if (dst.IsValid() && dst.HostIsEqual(*ctx->overlay) &&
+        lladdr.IsValid() && lladdr.IsUnicast() &&
+        (ProtoAddress::ETH != lladdr.GetType()))
+    {
+        *ctx->underlay = lladdr;
+        ctx->found = true;
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+bool Smf::FindUnderlayForOverlay(unsigned int ifaceIndex, const ProtoAddress& overlay,
+                                 ProtoAddress& underlay)
+{
+    if (!overlay.IsValid() || !overlay.IsUnicast() ||
+        (ProtoAddress::ETH == overlay.GetType()))
+        return false;
+    // Static NBMA and NHRP: kernel ip neigh on the GRE device maps
+    // overlay -> underlay.
+    UnderlayNeighCtx ctx;
+    ctx.overlay = &overlay;
+    ctx.underlay = &underlay;
+    ctx.found = false;
+    ProtoNet::GetInterfaceNeighbors(ifaceIndex, UnderlayNeighHandler, &ctx);
+    return ctx.found;
+}  // end Smf::FindUnderlayForOverlay()
+
+bool Smf::ResolveTunnelUnderlay(Interface& iface, const ProtoAddress& relay,
+                                ProtoAddress& underlay)
+{
+    if (!relay.IsValid() || !relay.IsUnicast() ||
+        (ProtoAddress::ETH == relay.GetType()))
+        return false;
+    // 1) Seen as the outer source of a packet received on this device.
+    if (iface.IsTunnelNeighbor(relay))
+    {
+        underlay = relay;
+        return true;
+    }
+    // 2) A mapped or learned unicast remote, or a learned overlay.
+    if (FindTunnelUnicastPeer(iface.GetIndex(), relay, underlay))
+        return true;
+    // 3) An overlay address in the kernel neighbor table.
+    return FindUnderlayForOverlay(iface.GetIndex(), relay, underlay);
+}  // end Smf::ResolveTunnelUnderlay()
+
 unsigned int Smf::FindInterfaceByLocalEndpoint(const ProtoAddress& addr)
 {
     if (!addr.IsValid() ||
@@ -3577,22 +3795,35 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
         PLOG(PL_WARN, "Smf::SendAck()  no IP address on interface %s!\n", iface.GetNameStr());
         return false;
     }
-    // Ethernet keeps 224.0.0.55. mGRE unicasts the inner dest to the
-    // peer overlay so gre1 delivers it (224.0.0.55 and the flow src
-    // LAN address are not local on the tunnel).
+    // GRE destination. Point-to-point GRE has one remote, and a device
+    // whose remote is a multicast group reaches every neighbor with one
+    // send. On any other multipoint GRE device, unicast the ACK to the
+    // relay's underlay address. That address must be a known GRE peer:
+    // a flow source or an unknown overlay address is never used as a GRE
+    // destination. If the relay cannot be resolved, send to every peer.
+    // Every copy carries the relay as its upstream address, and only the
+    // node that owns that address applies it.
+    const bool gre = iface.IsGRE() || iface.IsKernelGre();
+    const bool groupRemote = iface.IsKernelGre() ? iface.HasGreGroupRemote() :
+        (iface.GetTunnelRemoteAddress().IsValid() && iface.GetTunnelRemoteAddress().IsMulticast());
+    const bool multipoint = gre && !iface.IsP2PGre() && !groupRemote;
     ProtoAddress ackDst = ElasticAck::ELASTIC_ADDR;
     ProtoAddress mgrePeer;
-    if (mgre)
+    if (multipoint)
     {
-        ProtoAddress overlay;
-        if (FindTunnelUnicastPeer(iface.GetIndex(), upstreamAddr, mgrePeer))
-            ;
-        else if (upstreamAddr.IsValid() && upstreamAddr.IsUnicast() &&
-                 (ProtoAddress::ETH != upstreamAddr.GetType()))
-            mgrePeer = upstreamAddr;
-        if (mgrePeer.IsValid() &&
-            FindOverlayForUnderlay(iface.GetIndex(), mgrePeer, overlay))
-            ackDst = overlay;
+        if (ResolveTunnelUnderlay(iface, upstreamAddr, mgrePeer))
+        {
+            // Unicast the inner dest to the peer overlay when known, so the
+            // peer's GRE device delivers it as a local packet.
+            ProtoAddress overlay;
+            if (FindOverlayForUnderlay(iface.GetIndex(), mgrePeer, overlay))
+                ackDst = overlay;
+        }
+        else
+        {
+            PLOG(PL_DEBUG, "Smf::SendAck() %s: relay %s is not a known GRE peer; "
+                 "sending EM_ACK to every peer\n", iface.GetNameStr(), upstreamAddr.GetHostString());
+        }
     }
     UINT32 buffer[1416/4];
     unsigned int bufferLen = 1416;
@@ -3668,15 +3899,22 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
     {
         PLOG(PL_DEBUG, "nrlsmf: sending EM_ACK (len:%u) for flow \"", ethPkt.GetLength());
         flowDescription.Print();  // to debug output or log
-        PLOG(PL_ALWAYS, " to relay %s via interface index %d dest %s\n",
-             upstreamAddr.GetHostString(), iface.GetIndex(), ackDst.GetHostString());
+        // GetHostString() without a buffer reuses one static buffer.
+        char relayStr[64], dstStr[64], greStr[64];
+        upstreamAddr.GetHostString(relayStr, sizeof(relayStr));
+        ackDst.GetHostString(dstStr, sizeof(dstStr));
+        if (multipoint && mgrePeer.IsValid())
+            mgrePeer.GetHostString(greStr, sizeof(greStr));
+        else
+            strncpy(greStr, multipoint ? "all-peers" : "-", sizeof(greStr));
+        greStr[sizeof(greStr) - 1] = '\0';
+        PLOG(PL_ALWAYS, " to relay %s via interface index %d dest %s gre %s\n",
+             relayStr, iface.GetIndex(), dstStr, greStr);
     }
 
     // TBD - Implement ACK rate limiter by bundling multiple flow acks for common upstream relay
     // (i.e. do this with a timer and some sort of helper classes)
-    // mGRE ACK dest mirrors data inject: unicast if that peer is in the
-    // map (or learned), otherwise the underlay multicast group.
-    if (mgre)
+    if (multipoint)
     {
         ProtoAddress mcastUnderlay;
         if (mgrePeer.IsValid())
@@ -3686,6 +3924,8 @@ bool Smf::SendAck(Interface&                    iface,        // interface it go
             return output_mechanism->SendFrameTo(iface.GetIndex(), (char*)ethPkt.GetBuffer(),
                                                  ethPkt.GetLength(), mcastUnderlay);
     }
+    // Ethernet, point-to-point GRE, a multicast-group remote, or every
+    // mapped multipoint GRE peer.
     return output_mechanism->SendFrame(iface.GetIndex(), (char*)ethPkt.GetBuffer(), ethPkt.GetLength());
 
 }  // end Smf::SendAck()

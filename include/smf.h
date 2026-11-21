@@ -103,6 +103,7 @@ class Smf
         // The address information includes a local address and _optional_ remote address
         // to help identify interfaces associated with tunnel address information
         // (i.e., local/remote endpoint addresses)
+        class Interface;  // defined below
         class InterfaceInfo : public ProtoTree::Item
         {
             public:
@@ -408,6 +409,25 @@ class Smf
                                    ProtoAddress& dest);
         bool FindOverlayForUnderlay(unsigned int ifaceIndex, const ProtoAddress& underlay,
                                     ProtoAddress& overlay);
+        bool FindUnderlayForOverlay(unsigned int ifaceIndex, const ProtoAddress& overlay,
+                                    ProtoAddress& underlay);
+        // Underlay address to use as the GRE destination for "relay" on a
+        // multipoint GRE device: a neighbor seen as an outer GRE source,
+        // a mapped or learned remote, or the underlay of a known overlay
+        // address. False when relay cannot be resolved (for example a
+        // flow source or an unknown overlay address): such an address is
+        // never used as a GRE destination.
+        bool ResolveTunnelUnderlay(Interface& iface, const ProtoAddress& relay,
+                                   ProtoAddress& underlay);
+#ifdef ELASTIC_MCAST
+        // True if an EM_ACK received on ackIface names this host as its
+        // upstream relay (an address on any local interface), or names no
+        // relay and this host relays the flow onto ackIface.
+        bool AckNamesThisHost(const ElasticAck& ack, Interface& ackIface);
+        // True if this host has the EM_ACK's flow and does not receive it
+        // on iface (so it may forward the flow onto iface).
+        bool RelaysFlowOnto(const ElasticAck& ack, Interface& iface);
+#endif // ELASTIC_MCAST
 
         unsigned int FindMappedIndexForRemote(const ProtoAddress& remote)
         {
@@ -505,6 +525,46 @@ class Smf
                 void ClearLearnedOverlays();
                 bool IsGRE() const
                     {return tunnel_local_addr.IsValid();}
+                // Kernel GRE or mGRE, including a device whose tunnel
+                // endpoints are not mapped yet. IsGRE() is true only after
+                // a tunnel local address is known.
+                void SetKernelGre(bool state)
+                    {kernel_gre = state;}
+                bool IsKernelGre() const
+                    {return kernel_gre;}
+                // Multipoint GRE (wildcard or multicast remote, or external
+                // collect_md), as the kernel reports the device. The "map"
+                // command overwrites the tunnel remote address kept here,
+                // so it cannot tell point-to-point from multipoint.
+                // On multipoint GRE the previous hop is the per-packet
+                // outer GRE source, which nrlsmf reads from a raw GRE
+                // socket. The packet capture's link-layer source is not
+                // relied on: external devices have none, and some kernels
+                // report the inner IP source there instead.
+                void SetGreMultipoint(bool multipoint, bool groupRemote)
+                {
+                    gre_multipoint = multipoint;
+                    gre_group_remote = groupRemote;
+                }
+                bool IsMultipointGre() const
+                    {return gre_multipoint;}
+                // Kernel GRE remote is a multicast group (one send reaches
+                // every neighbor).
+                bool HasGreGroupRemote() const
+                    {return gre_group_remote;}
+                // Point-to-point GRE: one unicast remote.
+                bool IsP2PGre() const
+                {
+                    if (kernel_gre)
+                        return !gre_multipoint;
+                    return IsGRE() && tunnel_remote_addr.IsValid() &&
+                           tunnel_remote_addr.IsUnicast();
+                }
+                // Underlay sources seen in the outer GRE header of packets
+                // received on this device. Only these (and mapped or learned
+                // remotes) are used as a unicast GRE destination for EM_ACK.
+                void NoteTunnelNeighbor(const ProtoAddress& underlay);
+                bool IsTunnelNeighbor(const ProtoAddress& underlay) const;
 
                 ProtoAddressList& AccessAddressList()
                     {return addr_list;}
@@ -782,6 +842,10 @@ class Smf
                 ProtoAddress                          tunnel_local_addr;  // valid when Smf::Interface is GRE endpoint
                 ProtoAddress                          tunnel_remote_addr;
                 bool                                  tunnel_learn_dynamic; // map <iface>,<local>,dynamic
+                bool                                  kernel_gre;    // IFACE_GRE even with no mapped endpoints
+                bool                                  gre_multipoint;   // kernel GRE device is multipoint
+                bool                                  gre_group_remote; // kernel GRE remote is a multicast group
+                ProtoAddressList                      tunnel_neighbors; // outer GRE sources seen on receive
                 ProtoAddressList                      learned_overlays;  // overlay neigh dst -> underlay (userData)
                 ProtoAddress                          ip_addr;       // used as source addr for nrlsmf IPIP encapsulation
                 std::string                           if_name;

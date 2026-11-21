@@ -3202,8 +3202,9 @@ void ElasticMulticastController::HandleAck(const ElasticAck&   ack,
     if ((iface->GetIpAddress().GetType() == ProtoAddress::INVALID) &&
         !iface->GetTunnelLocalAddress().IsValid())
     {
-        PLOG(PL_WARN, "ElasticMulticastController::HandleAck() no IP address on interface %s!\n", iface->GetNameStr());
-        return;
+        // Record the acknowledgement even when the interface has no
+        // address yet. Logged at debug level: this repeats on every EM_ACK.
+        PLOG(PL_DEBUG, "ElasticMulticastController::HandleAck() no IP address on interface %s\n", iface->GetNameStr());
     }
     unsigned int ifaceIndex = iface->GetIndex();
 

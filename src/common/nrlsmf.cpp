@@ -64,8 +64,175 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #endif
+#ifdef LINUX
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <errno.h>
+#include <fcntl.h>
+#endif
 
 #define FRR_PID_FILE_PATH "/var/run/frr/nrlsmf.pid"
+
+#ifdef LINUX
+// Outer GRE source for packets captured on an external (collect_md) GRE
+// device. A packet capture on such a device has no link-layer header, so
+// the kernel cannot report the outer source. A raw IPPROTO_GRE socket gets
+// a copy of every inbound GRE packet before the kernel decapsulates it, so
+// by the time the capture delivers the inner packet, the copy is already
+// queued on the raw socket. Lookup() drains the raw socket and matches the
+// inner packet by length and a hash of its first bytes, oldest first, so
+// identical copies relayed by two neighbors pair up in arrival order.
+class GreOuterSourceCache
+{
+    public:
+        GreOuterSourceCache() : fd(-1), next(0)
+            {memset(ring, 0, sizeof(ring));}
+        ~GreOuterSourceCache()
+            {Close();}
+        bool Open()
+        {
+            if (fd >= 0)
+                return true;
+            fd = socket(AF_INET, SOCK_RAW, IPPROTO_GRE);
+            if (fd < 0)
+            {
+                PLOG(PL_ERROR, "GreOuterSourceCache::Open() socket(IPPROTO_GRE) error: %s\n",
+                     GetErrorString());
+                return false;
+            }
+            int flags = fcntl(fd, F_GETFL, 0);
+            if ((flags < 0) || (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0))
+            {
+                PLOG(PL_ERROR, "GreOuterSourceCache::Open() fcntl(O_NONBLOCK) error: %s\n",
+                     GetErrorString());
+                Close();
+                return false;
+            }
+            int rcvbuf = 1024 * 1024;
+            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+            return true;
+        }
+        void Close()
+        {
+            if (fd >= 0)
+            {
+                close(fd);
+                fd = -1;
+            }
+        }
+        bool IsOpen() const
+            {return fd >= 0;}
+        // Find the outer source of the inner IPv4 packet "inner".
+        bool Lookup(const UINT8* inner, unsigned int innerLen, ProtoAddress& outerSrc)
+        {
+            if (fd < 0)
+                return false;
+            Drain();
+            UINT32 hash = Hash(inner, innerLen);
+            // Oldest first: start just after the newest entry.
+            for (unsigned int i = 0; i < RING_SIZE; i++)
+            {
+                Entry& e = ring[(next + i) % RING_SIZE];
+                if (e.valid && (e.len == innerLen) && (e.hash == hash))
+                {
+                    e.valid = false;
+                    outerSrc.SetRawHostAddress(ProtoAddress::IPv4, (const char*)e.src, 4);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+    private:
+        enum {RING_SIZE = 256, HASH_BYTES = 64, RAW_MAX = 9216};
+        struct Entry
+        {
+            bool         valid;
+            unsigned int len;
+            UINT32       hash;
+            UINT8        src[4];
+        };
+        static UINT32 Hash(const UINT8* data, unsigned int len)
+        {
+            // FNV-1a over the inner IP header and the start of its payload.
+            UINT32 h = 2166136261u;
+            unsigned int n = (len < HASH_BYTES) ? len : HASH_BYTES;
+            for (unsigned int i = 0; i < n; i++)
+            {
+                h ^= data[i];
+                h *= 16777619u;
+            }
+            return h;
+        }
+        void Drain()
+        {
+            UINT8 buf[RAW_MAX];
+            for (;;)
+            {
+                ssize_t n = recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+                if (n < 0)
+                {
+                    if (EINTR == errno)
+                        continue;
+                    if ((EAGAIN != errno) && (EWOULDBLOCK != errno))
+                        PLOG(PL_WARN, "GreOuterSourceCache::Drain() recv() error: %s\n",
+                             GetErrorString());
+                    return;
+                }
+                // Outer IPv4 header, then the GRE header.
+                if ((n < 20) || (4 != (buf[0] >> 4)) || (47 != buf[9]))
+                    continue;
+                unsigned int ihl = 4 * (buf[0] & 0x0f);
+                if ((unsigned int)n < ihl + 4)
+                    continue;
+                const UINT8* gre = buf + ihl;
+                if (0 != (gre[1] & 0x07))  // GRE version 0 only
+                    continue;
+                if ((0x08 != gre[2]) || (0x00 != gre[3]))  // inner IPv4 only
+                    continue;
+                unsigned int greLen = 4;
+                if (0 != (gre[0] & 0x80)) greLen += 4;  // checksum
+                if (0 != (gre[0] & 0x20)) greLen += 4;  // key
+                if (0 != (gre[0] & 0x10)) greLen += 4;  // sequence
+                if ((unsigned int)n <= ihl + greLen)
+                    continue;
+                const UINT8* inner = gre + greLen;
+                unsigned int innerLen = (unsigned int)n - ihl - greLen;
+                Entry& e = ring[next];
+                e.valid = true;
+                e.len = innerLen;
+                e.hash = Hash(inner, innerLen);
+                memcpy(e.src, buf + 12, 4);
+                next = (next + 1) % RING_SIZE;
+            }
+        }
+
+        int          fd;
+        unsigned int next;   // slot for the next entry (also the oldest)
+        Entry        ring[RING_SIZE];
+};  // end class GreOuterSourceCache
+#endif // LINUX
+
+// Test hooks, read once from the environment (both off by default):
+//  NRLSMF_TEST_CAPTURE_INNER_SRC=1  treat the packet capture's source on a
+//      GRE device as the inner IP source, as some kernels report it.
+//  NRLSMF_TEST_NO_GRE_OUTER_SOCKET=1  do not open the raw GRE socket used
+//      to read outer GRE sources.
+static bool TestEnvFlag(const char* name)
+{
+    const char* value = getenv(name);
+    return (NULL != value) && ('\0' != value[0]) && (0 != strcmp(value, "0"));
+}
+static bool TestCaptureInnerSrc()
+{
+    static const bool state = TestEnvFlag("NRLSMF_TEST_CAPTURE_INNER_SRC");
+    return state;
+}
+static bool TestNoGreOuterSocket()
+{
+    static const bool state = TestEnvFlag("NRLSMF_TEST_NO_GRE_OUTER_SOCKET");
+    return state;
+}
 class SmfApp : public ProtoApp
 #ifdef ELASTIC_MCAST
     , public ElasticMulticastForwarder::OutputMechanism
@@ -204,7 +371,10 @@ class SmfApp : public ProtoApp
         void OnPktOutput(ProtoChannel&              theChannel,
 	                     ProtoChannel::Notification notifyType);
 
-        bool HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, ProtoCap& srcCap);
+        // outerSrc, when given, is the outer GRE source of a packet that
+        // arrived on a GRE device (the previous hop on that tunnel).
+        bool HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, ProtoCap& srcCap,
+                                 const ProtoAddress* outerSrc = NULL);
 
         void HandleIGMP(ProtoPktIGMP igmpMsg, Smf::Interface& iface, bool inbound);
 
@@ -225,6 +395,12 @@ class SmfApp : public ProtoApp
 
         bool JoinUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         // mGRE PF_PACKET does not deliver 224.0.0.55 unless the tunnel joins it.
+        // Record that iface is a kernel GRE device (and whether it is
+        // external/collect_md, which needs gre_outer_cache for its
+        // previous hop).
+        void MarkKernelGre(Smf::Interface& iface);
+        bool CaptureSourceIsOuter(Smf::Interface& iface, const ProtoAddress& capSrc,
+                                  ProtoPktETH& ethPkt);
         bool JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName);
         bool LeaveUnderlayGroup(const ProtoAddress& groupAddr, const char* ifaceName);
         bool GreDeviceIsUnicastMgre(Smf::Interface& iface);
@@ -485,6 +661,9 @@ class SmfApp : public ProtoApp
         ProtoAddressList            underlay_join_groups;   // ujoin group -> underlay ifindex
         ProtoCap*                   underlay_gre_cap;       // GRE-in-mcast capture (unicast mGRE only)
         ProtoAddressList            underlay_gre_groups;    // groups that need capture demux
+#ifdef LINUX
+        GreOuterSourceCache         gre_outer_cache;        // outer GRE source for collect_md devices
+#endif // LINUX
 #ifdef ADAPTIVE_ROUTING
         SmartController             smart_controller;
 #endif // ADAPTIVE_ROUTING
@@ -4547,10 +4726,40 @@ bool SmfApp::ParseRouteList(const char* routeList)
 }  // end SmfApp::ParseRouteList()
 
 
+void SmfApp::MarkKernelGre(Smf::Interface& iface)
+{
+    iface.SetKernelGre(true);
+    bool collectMd = false;
+    ProtoAddress remote;
+    ProtoNet::GetInterfaceType(iface.GetIndex(), NULL, &remote, &collectMd);
+    // Point-to-point GRE has one unicast remote, which is the previous
+    // hop. Every other GRE device needs the per-packet outer source.
+    bool multipoint = collectMd || !remote.IsValid() || !remote.IsUnicast();
+    bool groupRemote = !collectMd && remote.IsValid() && remote.IsMulticast();
+    iface.SetGreMultipoint(multipoint, groupRemote);
+#ifdef LINUX
+    if (multipoint && !gre_outer_cache.IsOpen() && TestNoGreOuterSocket())
+    {
+        PLOG(PL_WARN, "nrlsmf: test: not reading outer GRE sources for %s\n", iface.GetNameStr());
+    }
+    else if (multipoint && !gre_outer_cache.IsOpen())
+    {
+        if (gre_outer_cache.Open())
+            PLOG(PL_INFO, "nrlsmf: reading outer GRE sources for multipoint GRE device %s\n",
+                 iface.GetNameStr());
+        else
+            PLOG(PL_WARN, "nrlsmf: warning: cannot read outer GRE sources for %s; "
+                 "previous hop falls back to the packet capture\n", iface.GetNameStr());
+    }
+#endif // LINUX
+}  // end SmfApp::MarkKernelGre()
+
 #ifdef ELASTIC_MCAST
 bool SmfApp::JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName)
 {
-    if (!iface.IsGRE())
+    // Join the elastic address on kernel GRE even when no tunnel local
+    // is mapped yet. IsGRE() is false until that address is known.
+    if (!iface.IsGRE() && !iface.IsKernelGre())
         return true;
     if (elastic_ack_joined.count(iface.GetIndex()) != 0)
         return true;
@@ -4562,9 +4771,17 @@ bool SmfApp::JoinElasticAckGroup(Smf::Interface& iface, const char* ifaceName)
     }
     if (!underlay_group_socket.JoinGroup(ElasticAck::ELASTIC_ADDR, ifaceName))
     {
-        PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: join %s on %s failed\n",
+        // A mapped GRE join failure is an error. An unmapped device may
+        // not be ready to join yet, so warn and continue.
+        if (iface.IsGRE())
+        {
+            PLOG(PL_ERROR, "SmfApp::JoinElasticAckGroup() error: join %s on %s failed\n",
+                 ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
+            return false;
+        }
+        PLOG(PL_WARN, "SmfApp::JoinElasticAckGroup() warning: join %s on %s failed\n",
              ElasticAck::ELASTIC_ADDR.GetHostString(), ifaceName);
-        return false;
+        return true;
     }
     elastic_ack_joined.insert(iface.GetIndex());
     return true;
@@ -4712,6 +4929,10 @@ void SmfApp::OnUnderlayGreCapture(ProtoChannel&              theChannel,
         ip4.GetDstAddr(dst);
         if (!underlay_gre_groups.Contains(dst))
             continue;
+        // The outer source is the previous hop on this tunnel. Read it now:
+        // the inner packet is copied over this buffer below.
+        ProtoAddress outerSrc;
+        ip4.GetSrcAddr(outerSrc);
 
         unsigned int ipHdrLen = ip4.GetHeaderLength();
         unsigned int greBytes = ethPkt.GetPayloadLength();
@@ -4750,7 +4971,7 @@ void SmfApp::OnUnderlayGreCapture(ProtoChannel&              theChannel,
         outEth.InitIntoBuffer(ethBuffer, 14 + innerLen);
         outEth.SetType(ProtoPktETH::IP);
         outEth.SetPayloadLength(innerLen);
-        HandleInboundPacket(alignedBuffer, 14 + innerLen, greCap);
+        HandleInboundPacket(alignedBuffer, 14 + innerLen, greCap, &outerSrc);
     }
 }  // end SmfApp::OnUnderlayGreCapture()
 
@@ -5367,6 +5588,7 @@ Smf::Interface* SmfApp::GetInterface(const char* ifName, unsigned int ifIndex)
     // if if is a GRE interface, record its tunnel local addr for SMF operations
     if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
     {
+        MarkKernelGre(*iface);
         const ProtoAddress& localAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr();
         const ProtoAddress& remoteAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
         TRACE("SmfApp::GetInterface() GRE interface %s local:%s", ifName, localAddr.GetHostString());
@@ -6266,6 +6488,7 @@ Smf::Interface* SmfApp::AddDevice(const char* vifName, const char* ifaceNameAndF
     InterfaceMechanism* mech = static_cast<InterfaceMechanism*>(iface->GetExtension());
     if (ProtoNet::IFACE_GRE == mech->GetPrincipalElement()->GetProtoCap().GetInterfaceType())
     {
+        MarkKernelGre(*iface);
         const ProtoAddress& localAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelLocalAddr();
         const ProtoAddress& remoteAddr = mech->GetPrincipalElement()->GetProtoCap().GetTunnelRemoteAddr();
         if (localAddr.IsValid() && !localAddr.HostIsEqual(PROTO_ADDR_ANY) && !localAddr.HostIsEqual(PROTO_ADDR_ANY6) && remoteAddr.IsValid())
@@ -8262,8 +8485,24 @@ void SmfApp::OnPktCapture(ProtoChannel&              theChannel,
                 ethPkt.SetPayloadLength(numBytes);
                 numBytes += 14;
             }
+            // Multipoint GRE: look up the outer source the raw GRE socket
+            // saw for this packet (the previous hop on the tunnel).
+            ProtoAddress outerSrc;
+            bool haveOuterSrc = false;
+#ifdef LINUX
+            Smf::Interface* capIface = reinterpret_cast<Smf::Interface*>((void*)cap.GetUserData());
+            if ((ProtoNet::IFACE_GRE == cap.GetInterfaceType()) &&
+                (NULL != capIface) && capIface->IsMultipointGre())
+            {
+                haveOuterSrc = gre_outer_cache.Lookup((const UINT8*)ethBuffer + 14,
+                                                      numBytes - 14, outerSrc);
+                if (!haveOuterSrc)
+                    PLOG(PL_DEBUG, "SmfApp::OnPktCapture() %s: outer GRE source not found\n",
+                         capIface->GetNameStr());
+            }
+#endif // LINUX
             PLOG(PL_DETAIL, "SmfApp::OnPktCapture() calling HandleInboundPacket\n");
-            HandleInboundPacket(alignedBuffer, numBytes, cap);
+            HandleInboundPacket(alignedBuffer, numBytes, cap, haveOuterSrc ? &outerSrc : NULL);
         }  // end while(1)  (reading ProtoTap device loop)
     }
     else if (ProtoChannel::NOTIFY_OUTPUT == notifyType)
@@ -8571,11 +8810,43 @@ void SmfApp::HandleIGMP(ProtoPktIGMP igmpMsg, Smf::Interface& iface, bool inboun
     }
 }  // end SmfApp::HandleIGMP()
 
+// Some kernels report the inner IP source as the link-layer source of a
+// packet captured on a GRE device, instead of the outer GRE source. Accept
+// the captured source as the previous hop only when it is not the inner
+// source, or when it is a known peer on this tunnel (a neighbor that
+// originated the packet itself).
+bool SmfApp::CaptureSourceIsOuter(Smf::Interface& iface, const ProtoAddress& capSrc,
+                                  ProtoPktETH& ethPkt)
+{
+    ProtoPktIP ipPkt;
+    if (!ipPkt.InitFromBuffer(ethPkt.GetPayloadLength(), ethPkt.AccessPayload(),
+                              ethPkt.GetPayloadLength()))
+        return true;
+    ProtoAddress innerSrc;
+    if (4 == ipPkt.GetVersion())
+        ProtoPktIPv4(ipPkt).GetSrcAddr(innerSrc);
+    else if (6 == ipPkt.GetVersion())
+        ProtoPktIPv6(ipPkt).GetSrcAddr(innerSrc);
+    if (!innerSrc.IsValid() || !innerSrc.HostIsEqual(capSrc))
+        return true;
+    if (iface.IsTunnelNeighbor(capSrc))
+        return true;
+#ifdef ELASTIC_MCAST
+    ProtoAddress peer;
+    if (smf.FindTunnelUnicastPeer(iface.GetIndex(), capSrc, peer))
+        return true;
+#endif // ELASTIC_MCAST
+    PLOG(PL_DEBUG, "SmfApp::HandleInboundPacket() %s: captured source %s is the inner source, "
+         "not a GRE neighbor; previous hop unknown\n", iface.GetNameStr(), capSrc.GetHostString());
+    return false;
+}  // end SmfApp::CaptureSourceIsOuter()
+
 // returns "true" if packet is destined for local host.  This will be the case for multicast packets
 // and unicast packets destined for the local host.
 // TODO: Currently the unicast packets follow the former path through OnPktIntercept() and are NOT processed
 // through HandleInboundPacket()
-bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, ProtoCap& srcCap)
+bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, ProtoCap& srcCap,
+                                 const ProtoAddress* outerSrc)
 {
     // NOTE:  The "alignedBuffer" has 256*4 + 2 bytes of extra space at head for an "smfPkt" header to be
     //        be prepended by "ForwardToTap()" if needed.  The "ethBuffer" is a UINT16 pointer offset
@@ -8608,15 +8879,36 @@ bool SmfApp::HandleInboundPacket(UINT32* alignedBuffer, unsigned int numBytes, P
     bool srcCapIsGRE = (ProtoNet::IFACE_GRE == srcCap.GetInterfaceType());
     if (srcCapIsGRE)
     {
-        // Configured remote is INADDR_ANY for mGRE; use the per-packet
-        // GRE outer source so each neighbor has a distinct previous hop.
-        prevHopAddr = srcCap.GetTunnelRemoteAddr();
-        if (TunnelAddrUnspecified(prevHopAddr))
+        // The previous hop is the outer GRE source of this packet:
+        //  - a caller that parsed the outer header passes it (underlay
+        //    multicast demux, or the raw GRE socket on multipoint GRE);
+        //  - point-to-point GRE has exactly one unicast remote;
+        //  - as a last resort, the source the packet capture reports.
+        // A wildcard (0.0.0.0) or multicast-group remote is never a
+        // previous hop: every neighbor on the tunnel would share it.
+        const ProtoAddress& configured = srcCap.GetTunnelRemoteAddr();
+        ProtoAddress pktRemote = srcCap.GetPacketRemoteAddr();
+        if (TestCaptureInnerSrc())
         {
-            const ProtoAddress& pktRemote = srcCap.GetPacketRemoteAddr();
-            if (pktRemote.IsValid() && !TunnelAddrUnspecified(pktRemote))
-                prevHopAddr = pktRemote;
+            ProtoPktIP innerPkt;
+            if (innerPkt.InitFromBuffer(ethPkt.GetPayloadLength(), ethPkt.AccessPayload(),
+                                        ethPkt.GetPayloadLength()) &&
+                (4 == innerPkt.GetVersion()))
+                ProtoPktIPv4(innerPkt).GetSrcAddr(pktRemote);
         }
+        if ((NULL != outerSrc) && outerSrc->IsValid() && outerSrc->IsUnicast())
+            prevHopAddr = *outerSrc;
+        else if (configured.IsValid() && configured.IsUnicast())
+            prevHopAddr = configured;
+        else if (pktRemote.IsValid() && pktRemote.IsUnicast() &&
+                 CaptureSourceIsOuter(*srcIface, pktRemote, ethPkt))
+            prevHopAddr = pktRemote;
+        else if (configured.IsValid() && (ProtoAddress::IPv6 == configured.GetType()))
+            prevHopAddr = PROTO_ADDR_ANY6;
+        else
+            prevHopAddr = PROTO_ADDR_ANY;
+        if (prevHopAddr.IsUnicast())
+            srcIface->NoteTunnelNeighbor(prevHopAddr);
         nextHopAddr = srcCap.GetTunnelLocalAddr();
     }
     else
@@ -9048,6 +9340,7 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
             ProtoAddress remoteAddr;
             if (ProtoNet::IFACE_GRE == ProtoNet::GetInterfaceType(ifIndex, &localAddr, &remoteAddr))
             {
+                MarkKernelGre(*iface);
                 // Only add tunnel addressing when local endpoint is valid
                 // (nrlsmf "address" command will be needed to separately set tunnel endpoint information
                 //  such as when "external" mode "metadata" lightweight GRE tunnels are used)
@@ -9062,6 +9355,22 @@ void SmfApp::MonitorEventHandler(ProtoChannel&               theChannel,
                 {
                     PLOG(PL_WARN, "SmfApp::MonitorEventHandler() warning: GRE interface '%s' missing tunnel endpoint addressing. (must map it)\n", ifName);
                 }
+#ifdef ELASTIC_MCAST
+                // Interface may already be in an elastic group from before
+                // the kernel reported it as GRE (tunnel plugin came up late).
+                // Joined after the endpoints are recorded so a failed join on
+                // a mapped device is reported as an error.
+                Smf::InterfaceGroupList::Iterator grouperator(smf.AccessInterfaceGroupList());
+                Smf::InterfaceGroup* group;
+                while (NULL != (group = grouperator.GetNextItem()))
+                {
+                    if (group->GetElasticMulticast() && group->Contains(*iface))
+                    {
+                        JoinElasticAckGroup(*iface, ifName);
+                        break;
+                    }
+                }
+#endif // ELASTIC_MCAST
             }
             if (!ifaceAddrList.AddList(addrList))
             {
