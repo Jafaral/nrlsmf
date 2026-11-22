@@ -24,8 +24,10 @@ import re
 from munet.mutest.userapi import step
 
 ELASTIC_PORT = 5555
-# Small GRE packets only: EM_ACKs are well under 200 bytes, data is not.
-_FILTER = "proto gre and ip[2:2] < 200"
+# EM_ACKs are well under 250 bytes including a cooked link header; data is not.
+# "len" is the captured frame length, so this stays valid on "any" (a cooked
+# device), where an ip[offset] filter is shifted and matches nothing.
+_FILTER = "ip proto 47 and len < 250"
 _HEX_LINE = re.compile(r"^\s+0x[0-9a-f]+:\s+((?:[0-9a-f]{2,4}\s?)+)")
 
 
@@ -35,8 +37,9 @@ def start_ack_capture(node, tag, iface="any"):
     tcpdump prints hex to stdout and the shell writes the file: tcpdump
     itself may not be allowed to write capture files (AppArmor).
     """
-    step(node, f"pkill -f 'tcpdump.*{_FILTER}' || true")
-    step(node, f"rm -f em-ack-{tag}.txt")
+    # The brackets keep pkill from matching its own command line.
+    step(node, f"pkill -f '[e]m-ack-{tag}.txt' || true")
+    step(node, f"rm -f em-ack-{tag}.txt em-ack-{tag}.log")
     step(
         node,
         f"tcpdump -i {iface} -nn -l -x -s 256 '{_FILTER}' "
@@ -48,9 +51,42 @@ def _ip(raw):
     return str(ipaddress.IPv4Address(bytes(raw)))
 
 
+def _outer_ipv4(pkt):
+    """Return the packet starting at its outer IPv4 header.
+
+    tcpdump -x sometimes includes the link header (Ethernet, or the Linux
+    cooked header used for ``-i any``). The outer header is IPv4 protocol
+    GRE; skip a leading link header when that is what the dump starts with.
+    """
+    def at(off):
+        if off < 0 or off + 20 > len(pkt):
+            return False
+        ver_ihl = pkt[off]
+        if (ver_ihl >> 4) != 4:
+            return False
+        ihl = 4 * (ver_ihl & 0x0F)
+        if ihl < 20 or off + ihl > len(pkt):
+            return False
+        if pkt[off + 9] != 47:
+            return False
+        total = int.from_bytes(pkt[off + 2:off + 4], "big")
+        if total < ihl + 4 or total > 9000:
+            return False
+        return True
+
+    for off in (0, 14, 16, 20):
+        if at(off):
+            return pkt[off:]
+    for off in range(len(pkt) - 20):
+        if at(off):
+            return pkt[off:]
+    return None
+
+
 def decode_em_ack(pkt):
     """Decode one outer IPv4/GRE packet. Returns a dict for an EM_ACK, else None."""
-    if len(pkt) < 20 or (pkt[0] >> 4) != 4 or pkt[9] != 47:
+    pkt = _outer_ipv4(pkt)
+    if pkt is None:
         return None
     ihl = 4 * (pkt[0] & 0x0F)
     gre = pkt[ihl:]
@@ -105,7 +141,10 @@ def _packets_from_hex(text):
         if m:
             if current is None:
                 current = bytearray()
-            current.extend(bytes.fromhex(m.group(1).replace(" ", "")))
+            try:
+                current.extend(bytes.fromhex(m.group(1).replace(" ", "")))
+            except ValueError:
+                current = None
             continue
         if current is not None:
             packets.append(bytes(current))
@@ -117,11 +156,15 @@ def _packets_from_hex(text):
 
 def read_ack_capture(node, tag):
     """Stop the capture on ``node`` and return the decoded EM_ACKs."""
-    step(node, f"pkill -f 'tcpdump.*{_FILTER}' || true")
+    step(node, f"pkill -f '[e]m-ack-{tag}.txt' || true")
     text = step(node, f"sleep 1; cat em-ack-{tag}.txt || true")
     acks = []
     for pkt in _packets_from_hex(str(text)):
         ack = decode_em_ack(pkt)
         if ack is not None:
             acks.append(ack)
+    if not acks:
+        step(node, f"echo '--- no EM_ACK decoded from em-ack-{tag}.txt ---'; "
+                   f"wc -c em-ack-{tag}.txt; echo '--- tcpdump ---'; "
+                   f"cat em-ack-{tag}.log || true")
     return acks

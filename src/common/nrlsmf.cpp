@@ -80,8 +80,10 @@
 // a copy of every inbound GRE packet before the kernel decapsulates it, so
 // by the time the capture delivers the inner packet, the copy is already
 // queued on the raw socket. Lookup() drains the raw socket and matches the
-// inner packet by length and a hash of its first bytes, oldest first, so
-// identical copies relayed by two neighbors pair up in arrival order.
+// inner packet by its IPv4 length and a hash of its first bytes. Checksum
+// fields are cleared before the hash: the capture and the raw copy can
+// differ there. Oldest match first, so identical copies relayed by two
+// neighbors pair up in arrival order.
 class GreOuterSourceCache
 {
     public:
@@ -128,12 +130,13 @@ class GreOuterSourceCache
             if (fd < 0)
                 return false;
             Drain();
-            UINT32 hash = Hash(inner, innerLen);
+            unsigned int matchLen = MatchLen(inner, innerLen);
+            UINT32 hash = Hash(inner, matchLen);
             // Oldest first: start just after the newest entry.
             for (unsigned int i = 0; i < RING_SIZE; i++)
             {
                 Entry& e = ring[(next + i) % RING_SIZE];
-                if (e.valid && (e.len == innerLen) && (e.hash == hash))
+                if (e.valid && (e.len == matchLen) && (e.hash == hash))
                 {
                     e.valid = false;
                     outerSrc.SetRawHostAddress(ProtoAddress::IPv4, (const char*)e.src, 4);
@@ -144,7 +147,7 @@ class GreOuterSourceCache
         }
 
     private:
-        enum {RING_SIZE = 256, HASH_BYTES = 64, RAW_MAX = 9216};
+        enum {RING_SIZE = 1024, HASH_BYTES = 64, RAW_MAX = 9216};
         struct Entry
         {
             bool         valid;
@@ -152,14 +155,48 @@ class GreOuterSourceCache
             UINT32       hash;
             UINT8        src[4];
         };
+        // IPv4 total length when it fits. A capture can be longer than the
+        // packet the raw socket saved (padding after the IP payload).
+        static unsigned int MatchLen(const UINT8* data, unsigned int len)
+        {
+            if ((NULL == data) || (len < 20) || (4 != (data[0] >> 4)))
+                return len;
+            unsigned int tot = ((unsigned int)data[2] << 8) | data[3];
+            if ((tot >= 20) && (tot <= len))
+                return tot;
+            return len;
+        }
         static UINT32 Hash(const UINT8* data, unsigned int len)
         {
             // FNV-1a over the inner IP header and the start of its payload.
-            UINT32 h = 2166136261u;
+            // Header and transport checksums are zeroed so the two copies
+            // still match when only those fields differ.
+            UINT8 tmp[HASH_BYTES];
             unsigned int n = (len < HASH_BYTES) ? len : HASH_BYTES;
+            memcpy(tmp, data, n);
+            if (n >= 12)
+            {
+                tmp[10] = 0;
+                tmp[11] = 0;
+            }
+            if ((n >= 20) && (4 == (tmp[0] >> 4)))
+            {
+                unsigned int ihl = 4u * (tmp[0] & 0x0f);
+                if ((17 == tmp[9]) && (ihl >= 20) && ((ihl + 8) <= n))
+                {
+                    tmp[ihl + 6] = 0;
+                    tmp[ihl + 7] = 0;
+                }
+                else if ((6 == tmp[9]) && (ihl >= 20) && ((ihl + 18) <= n))
+                {
+                    tmp[ihl + 16] = 0;
+                    tmp[ihl + 17] = 0;
+                }
+            }
+            UINT32 h = 2166136261u;
             for (unsigned int i = 0; i < n; i++)
             {
-                h ^= data[i];
+                h ^= tmp[i];
                 h *= 16777619u;
             }
             return h;
@@ -198,10 +235,11 @@ class GreOuterSourceCache
                     continue;
                 const UINT8* inner = gre + greLen;
                 unsigned int innerLen = (unsigned int)n - ihl - greLen;
+                unsigned int matchLen = MatchLen(inner, innerLen);
                 Entry& e = ring[next];
                 e.valid = true;
-                e.len = innerLen;
-                e.hash = Hash(inner, innerLen);
+                e.len = matchLen;
+                e.hash = Hash(inner, matchLen);
                 memcpy(e.src, buf + 12, 4);
                 next = (next + 1) % RING_SIZE;
             }
