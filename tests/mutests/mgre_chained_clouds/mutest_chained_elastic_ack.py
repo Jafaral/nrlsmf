@@ -143,13 +143,38 @@ def outbound(row, iface):
     return None
 
 
-def wait_forward(relay, dev, timeout=40):
+def wait_downstream(relay, dev, want, by_addr, timeout=40):
+    """Poll until the relay is FORWARD because of EM_ACK and lists want.
+
+    The first acknowledgement moves the interface to FORWARD. On a
+    multicast underlay a second member can acknowledge after that, so
+    the downstream list is not complete at the moment FORWARD appears.
+    """
     deadline = time.time() + timeout
     row = None
     while time.time() < deadline:
         row = flow_row(relay)
         oif = outbound(row, dev)
-        if oif is not None and oif.get("FwdStatus") == "FORWARD":
+        if (oif is not None and oif.get("FwdStatus") == "FORWARD" and
+                oif.get("Why") == "ack"):
+            addrs = oif.get("DownstreamRelays") or []
+            have = sorted(by_addr.get(a, a) for a in addrs)
+            if have == want:
+                return row
+        time.sleep(1)
+    return row
+
+
+def wait_acker(acker, dev, relay_ul, timeout=40):
+    """Poll until acker has the flow selected from relay_ul on dev."""
+    deadline = time.time() + timeout
+    row = None
+    while time.time() < deadline:
+        row = flow_row(acker)
+        sel = selected_source(row)
+        if (row is not None and row.get("Ack") == "yes" and
+                sel is not None and sel.get("Interface") == dev and
+                sel.get("UpstreamAddr") == relay_ul):
             return row
         time.sleep(1)
     return row
@@ -186,7 +211,8 @@ def check_state(phase):
             by_addr[cfg["overlay"]] = name
         relays = sorted(set(cloud["acks"].values()))
         for relay in relays:
-            row = wait_forward(relay, dev)
+            want = sorted(a for a, r in cloud["acks"].items() if r == relay)
+            row = wait_downstream(relay, dev, want, by_addr)
             oif = outbound(row, dev)
             test_step(
                 oif is not None and oif.get("FwdStatus") == "FORWARD",
@@ -202,7 +228,6 @@ def check_state(phase):
                 f"(got {oif.get('Why')!r})",
                 target=relay,
             )
-            want = sorted(a for a, r in cloud["acks"].items() if r == relay)
             addrs = oif.get("DownstreamRelays") or []
             have = sorted(by_addr.get(a, a) for a in addrs)
             test_step(
@@ -213,7 +238,7 @@ def check_state(phase):
             )
         for acker, relay in cloud["acks"].items():
             relay_ul = peers[relay]["underlay"]
-            row = flow_row(acker)
+            row = wait_acker(acker, dev, relay_ul)
             test_step(row is not None, f"[{phase}] {acker} has the flow", target=acker)
             if row is None:
                 continue
