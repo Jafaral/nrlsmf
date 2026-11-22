@@ -223,17 +223,30 @@ jobs:
       - name: Print mutest logs on failure
         if: failure()
         run: |
-          for f in /tmp/mutest/mutest-output.log; do
-            if [ -f "$f" ]; then
-              echo "===== $f ====="
-              cat "$f"
-            fi
-          done
+          if [ -f /tmp/mutest/mutest-output.log ]; then
+            echo "===== /tmp/mutest/mutest-output.log ====="
+            sudo cat /tmp/mutest/mutest-output.log
+          fi
+
+      - name: Collect mutest logs
+        if: failure()
+        run: |
+          dest="${RUNNER_TEMP}/mutest-logs"
+          rm -rf "$dest"
+          mkdir -p "$dest"
+          # mutest runs as root and leaves sockets and device nodes under
+          # /tmp/mutest. The artifact zip cannot store those, and this job
+          # cannot read root-only files such as frr.log. Copy regular log
+          # files into a directory the uploader can read.
+          sudo find /tmp/mutest -type f \
+            \( -name '*.log' -o -name '*.txt' \) \
+            -exec cp -a --parents -t "$dest" {} +
+          sudo chown -R "$(id -u):$(id -g)" "$dest"
 
       - name: Upload mutest logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: mutest-logs-${{ github.run_id }}
-          path: /tmp/mutest
+          path: ${{ runner.temp }}/mutest-logs
           if-no-files-found: ignore
