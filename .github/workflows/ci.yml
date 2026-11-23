@@ -183,10 +183,19 @@ jobs:
 
       - name: Install build and test dependencies
         run: |
+          # Ubuntu's frr is not the current stable. Use the FRR Debian repo.
+          # https://deb.frrouting.org/
+          curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
+            sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr ${VERSION_CODENAME} frr-stable" |
+            sudo tee /etc/apt/sources.list.d/frr.list
+          printf '%s\n' 'Package: frr*' 'Pin: origin deb.frrouting.org' 'Pin-Priority: 700' |
+            sudo tee /etc/apt/preferences.d/frr >/dev/null
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             g++ make libnetfilter-queue-dev \
-            iproute2 iputils-ping ethtool tcpdump iperf frr tmux python3-pip
+            iproute2 iputils-ping ethtool tcpdump iperf frr frr-pythontools tmux python3-pip
 
       - name: Cache pip downloads
         uses: actions/cache@v4
@@ -249,4 +258,109 @@ jobs:
         with:
           name: mutest-logs-${{ github.run_id }}
           path: ${{ runner.temp }}/mutest-logs
+          if-no-files-found: ignore
+
+  # Containers share the runner's kernel, so the GRE and multicast paths
+  # would still be tested on Ubuntu's kernel. Boot a Rocky 8 VM instead so
+  # the mutests run on the EL8 (4.18) kernel.
+  mutest-el8:
+    name: Test (Rocky 8 VM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    env:
+      EL8_IMAGE: https://dl.rockylinux.org/pub/rocky/8/images/x86_64/Rocky-8-GenericCloud-Base.latest.x86_64.qcow2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            qemu-system-x86 qemu-utils cloud-image-utils rsync
+
+      - name: Cache Rocky 8 image
+        uses: actions/cache@v4
+        with:
+          path: el8-base.qcow2
+          key: el8-image-v1  # bump to pick up a newer Rocky 8 point release
+
+      - name: Boot Rocky 8 VM
+        run: |
+          [ -s el8-base.qcow2 ] || curl -fsSL -o el8-base.qcow2 "$EL8_IMAGE"
+          qemu-img create -f qcow2 -F qcow2 -b el8-base.qcow2 el8.qcow2 20G
+          ssh-keygen -q -t ed25519 -N '' -f el8key
+          cat > user-data <<CFG
+          #cloud-config
+          hostname: el8
+          preserve_hostname: true
+          manage_etc_hosts: false
+          disable_root: false
+          users:
+            - name: root
+              ssh_authorized_keys:
+                - $(cat el8key.pub)
+          CFG
+          cloud-localds seed.img user-data
+          qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 8192 \
+            -drive file=el8.qcow2,if=virtio -drive file=seed.img,if=virtio,format=raw \
+            -nic user,model=virtio,hostfwd=tcp:127.0.0.1:2222-:22 \
+            -display none -serial file:el8-console.log -daemonize
+          cat > ssh_config <<CFG
+          Host el8
+            HostName 127.0.0.1
+            Port 2222
+            User root
+            IdentityFile $PWD/el8key
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ServerAliveInterval 30
+          CFG
+          for i in $(seq 60); do
+            ssh -F ssh_config el8 true 2>/dev/null && exit 0
+            sleep 5
+          done
+          cat el8-console.log
+          exit 1
+
+      - name: Copy sources into the VM
+        run: |
+          rsync -a -e "ssh -F ssh_config" \
+            --exclude el8-base.qcow2 --exclude el8.qcow2 --exclude seed.img \
+            ./ el8:/root/nrlsmf/
+
+      - name: Build and run mutests in the VM
+        run: ssh -F ssh_config el8 sh /root/nrlsmf/.github/scripts/el8-mutest.sh /root/nrlsmf
+
+      - name: Collect mutest logs
+        if: failure()
+        run: |
+          dest="${RUNNER_TEMP}/mutest-logs-el8"
+          mkdir -p "$dest"
+          ssh -F ssh_config el8 \
+            "cd / && find /tmp/mutest -type f \( -name '*.log' -o -name '*.txt' \) -print0 |
+             tar --null -czf - -T -" | tar -xzf - -C "$dest" || true
+          cp el8-console.log "$dest/" || true
+          if [ -f "$dest/tmp/mutest/mutest-output.log" ]; then
+            cat "$dest/tmp/mutest/mutest-output.log"
+          fi
+
+      - name: Upload mutest logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutest-logs-el8-${{ github.run_id }}
+          path: ${{ runner.temp }}/mutest-logs-el8
           if-no-files-found: ignore

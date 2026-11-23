@@ -157,13 +157,18 @@ for name in SPOKES:
 section("Create multipoint GRE interface on the hub and each spoke")
 
 # Kernel fallback gre0 (remote any) will steal inbound GRE if left up.
+# nhrpd reads the local address and key with RTM_GETLINK. The ioctl
+# form (`ip tunnel add`) does not fill those attributes on a 4.18
+# kernel, so the NHS never sees a registration. `ip link add type gre`
+# does, which is also what the static NBMA test uses.
 step(HUB, "ip addr flush dev gre0 2>/dev/null || true")
 step(HUB, "ip link set gre0 down 2>/dev/null || true")
 step(HUB, f"ip link del {GRE_DEV} 2>/dev/null || true")
 step(
     HUB,
-    f"ip tunnel add {GRE_DEV} mode gre "
-    f"local {ROUTERS[HUB]['underlay']} key {GRE_KEY} ttl 64",
+    f"ip link add name {GRE_DEV} type gre "
+    f"local {ROUTERS[HUB]['underlay']} remote 0.0.0.0 "
+    f"key {GRE_KEY} ttl 64",
 )
 step(HUB, f"ip addr add {ROUTERS[HUB]['overlay']}/32 dev {GRE_DEV}")
 step(HUB, f"ip link set {GRE_DEV} multicast on")
@@ -182,8 +187,9 @@ for name in SPOKES:
     step(name, f"ip link del {GRE_DEV} 2>/dev/null || true")
     step(
         name,
-        f"ip tunnel add {GRE_DEV} mode gre "
-        f"local {cfg['underlay']} key {GRE_KEY} ttl 64",
+        f"ip link add name {GRE_DEV} type gre "
+        f"local {cfg['underlay']} remote 0.0.0.0 "
+        f"key {GRE_KEY} ttl 64",
     )
     step(name, f"ip addr add {cfg['overlay']}/32 dev {GRE_DEV}")
     step(name, f"ip link set {GRE_DEV} multicast on")

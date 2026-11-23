@@ -45,7 +45,7 @@ SYSTEM_HAVES =  -DHAVE_IPV6 -DHAVE_ASSERT -DHAVE_GETLOGIN -DHAVE_FLOCK -DHAVE_DI
 SYSTEM_SRC = ../protolib/src/bsd/bsdRouteMgr.cpp ../protolib/src/bsd/bsdDetour.cpp ../protolib/src/unix/bpfCap.cpp
 
 SYSTEM = freebsd
-CC = g++
+CC = c++
 RANLIB = ranlib
 AR = ar
 
