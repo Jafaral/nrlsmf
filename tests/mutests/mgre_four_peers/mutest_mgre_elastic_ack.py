@@ -150,14 +150,52 @@ def outbound(row, iface):
     return None
 
 
-def wait_relay_forward(relay, group, src_addr, timeout=30):
-    """Poll the relay until gre1 is FORWARD for the flow."""
+def wait_relay_forward(relay, group, src_addr, timeout=40):
+    """Poll the relay until gre1 is FORWARD because of an EM_ACK."""
     deadline = time.time() + timeout
     row = None
     while time.time() < deadline:
         row = flow_row(groups_details(relay), group, src_addr)
         oif = outbound(row, GRE_DEV)
-        if oif is not None and oif.get("FwdStatus") == "FORWARD":
+        if (oif is not None and oif.get("FwdStatus") == "FORWARD" and
+                oif.get("Why") == "ack"):
+            return row
+        time.sleep(1)
+    return row
+
+
+def wait_downstream(relay, group, src_addr, want, timeout=40):
+    """Poll until gre1 is FORWARD because of EM_ACK and lists want.
+
+    The first acknowledgement moves the interface to FORWARD. Other
+    members can acknowledge after that, so the downstream list is not
+    complete at the moment FORWARD appears.
+    """
+    deadline = time.time() + timeout
+    row = None
+    while time.time() < deadline:
+        row = flow_row(groups_details(relay), group, src_addr)
+        oif = outbound(row, GRE_DEV)
+        if (oif is not None and oif.get("FwdStatus") == "FORWARD" and
+                oif.get("Why") == "ack"):
+            addrs = oif.get("DownstreamRelays") or []
+            have = sorted(ROUTER_BY_ADDR.get(a, a) for a in addrs)
+            if have == sorted(want):
+                return row
+        time.sleep(1)
+    return row
+
+
+def wait_acker(acker, group, src_addr, relay_ul, timeout=40):
+    """Poll until acker selects gre1 from relay_ul and is acknowledging."""
+    deadline = time.time() + timeout
+    row = None
+    while time.time() < deadline:
+        row = flow_row(groups_details(acker), group, src_addr)
+        sel = selected_source(row)
+        if (row is not None and row.get("Ack") == "yes" and
+                sel is not None and sel.get("Interface") == GRE_DEV and
+                (relay_ul is None or sel.get("UpstreamAddr") == relay_ul)):
             return row
         time.sleep(1)
     return row
@@ -319,7 +357,10 @@ def check_state(phase, relay_known):
         relay_ul = UNDERLAY_OF[relay]
         src_addr = flow["src_addr"]
 
-        row = wait_relay_forward(relay, group, src_addr)
+        if relay_known:
+            row = wait_downstream(relay, group, src_addr, flow["ackers"])
+        else:
+            row = wait_relay_forward(relay, group, src_addr)
         oif = outbound(row, GRE_DEV)
         test_step(
             oif is not None and oif.get("FwdStatus") == "FORWARD",
@@ -348,7 +389,10 @@ def check_state(phase, relay_known):
                 )
 
         for acker in flow["ackers"]:
-            arow = flow_row(groups_details(acker), group, src_addr)
+            if relay_known:
+                arow = wait_acker(acker, group, src_addr, relay_ul)
+            else:
+                arow = wait_acker(acker, group, src_addr, None)
             test_step(
                 arow is not None,
                 f"[{phase}] {acker} has flow ({src_addr}, {group})",
